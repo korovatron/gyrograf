@@ -632,7 +632,38 @@ function pushInterpolatedTrace(deltaTheta) {
   }
 }
 
+const activePointers = new Map();
+let pinchLastDist = 0;
+
+function getPinchInfo() {
+  const pts = Array.from(activePointers.values());
+  const dx = pts[1].x - pts[0].x;
+  const dy = pts[1].y - pts[0].y;
+  return {
+    dist: Math.sqrt(dx * dx + dy * dy),
+    midX: (pts[0].x + pts[1].x) / 2,
+    midY: (pts[0].y + pts[1].y) / 2
+  };
+}
+
 canvas.addEventListener("pointerdown", (event) => {
+  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (activePointers.size === 2) {
+    // Second finger down - cancel any active draw/drag and enter pinch mode
+    cancelViewAnimation();
+    if (state.activeStroke && state.activeStroke.points.length < 2) {
+      state.strokes.pop();
+    }
+    state.dragging = false;
+    state.activeStroke = null;
+    state.selectedHole = -1;
+    state.view.dragMode = "pinch";
+    pinchLastDist = getPinchInfo().dist;
+    draw();
+    return;
+  }
+
   cancelViewAnimation();
   const screenPoint = screenToCanvas(event.clientX, event.clientY);
   const worldPoint = screenToWorld(event.clientX, event.clientY);
@@ -668,6 +699,21 @@ canvas.addEventListener("pointerdown", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (activePointers.has(event.pointerId)) {
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
+
+  if (state.view.dragMode === "pinch" && activePointers.size === 2) {
+    const { dist, midX, midY } = getPinchInfo();
+    if (pinchLastDist > 0) {
+      const factor = dist / pinchLastDist;
+      setZoomAt(midX, midY, state.view.zoom * factor);
+      draw();
+    }
+    pinchLastDist = dist;
+    return;
+  }
+
   const screenPoint = screenToCanvas(event.clientX, event.clientY);
   const previousScreenX = state.view.lastScreenX;
   const previousScreenY = state.view.lastScreenY;
@@ -700,6 +746,19 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 function stopDrag(event) {
+  activePointers.delete(event.pointerId);
+
+  if (state.view.dragMode === "pinch") {
+    if (activePointers.size < 2) {
+      state.view.dragMode = null;
+      pinchLastDist = 0;
+    } else {
+      pinchLastDist = getPinchInfo().dist;
+    }
+    draw();
+    return;
+  }
+
   if (!state.dragging) return;
   state.dragging = false;
   state.view.dragMode = null;
