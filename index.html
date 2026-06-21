@@ -4,21 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gyrograf</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap"
-      rel="stylesheet"
-    />
+    <link rel="icon" type="image/png" sizes="192x192" href="./images/appIcon_192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./images/appIcon_180.png" />
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#1A2F42" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Gyrograf" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="layout" id="layoutRoot">
-      <button id="panelToggle" class="panel-toggle" type="button" aria-expanded="true">Hide controls</button>
-
       <section class="panel" id="controlPanel" aria-label="Gyrograf Controls">
-        <h1>Gyrograf</h1>
-        <p class="subtitle">1960s spirograph, reimagined for the browser.</p>
+        <button id="panelTab" class="panel-tab" type="button" aria-label="Toggle controls panel" aria-expanded="true"></button>
+        <div class="panel-inner">
+        <img src="./images/logo.png" alt="Gyrograf" class="panel-logo" draggable="false">
+        <p class="subtitle">Fresh curves, gyros-style</p>
 
         <label>
           Ring piece
@@ -35,34 +36,29 @@
           <select id="smallTeeth"></select>
         </label>
 
-        <p class="gear-note" id="ringMeta"></p>
-        <p class="gear-note" id="wheelMeta"></p>
+        <div class="colour-row">
+          <label>
+            Ink
+            <input id="inkColour" type="color" value="#c400ff" />
+          </label>
+          <label>
+            Paper
+            <input id="paperColour" type="color" value="#fde9d4" />
+          </label>
+        </div>
 
         <label>
-          Ink colour
-          <input id="inkColour" type="color" value="#ff0000" />
-        </label>
-
-        <label>
-          Paper colour
-          <input id="paperColour" type="color" value="#fde9d4" />
-        </label>
-
-        <label>
-          Stroke width
+          Pen width
           <input id="strokeWidth" type="range" min="1" max="4" value="2" />
         </label>
 
         <div class="actions">
-          <button id="clearTrace" type="button">Clear trace</button>
-          <button id="resetWheel" type="button">Reset wheel</button>
-          <button id="resetView" type="button">Reset view</button>
+          <button id="clearTrace" type="button">Clear<br>trace</button>
+          <button id="toggleGear" type="button">Hide<br>gear</button>
+          <button id="resetView" type="button">Reset<br>view</button>
         </div>
 
-        <p class="help">
-          Click and hold any pen-hole on the small ring, then drag to roll it around the big ring.
-          The wheel stays meshed even if you push in the "wrong" direction.
-        </p>
+        </div>
       </section>
 
       <section class="stage-wrap" aria-label="Drawing stage">

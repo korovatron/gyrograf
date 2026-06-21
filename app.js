@@ -2,7 +2,7 @@ const canvas = document.getElementById("stage");
 const ctx = canvas.getContext("2d");
 const layoutRoot = document.getElementById("layoutRoot");
 const controlPanel = document.getElementById("controlPanel");
-const panelToggle = document.getElementById("panelToggle");
+const panelTab = document.getElementById("panelTab");
 const narrowMedia = window.matchMedia("(max-width: 980px)");
 
 const PRESETS = {
@@ -46,13 +46,11 @@ const controls = {
   ringPiece: document.getElementById("ringPiece"),
   track: document.getElementById("track"),
   smallTeeth: document.getElementById("smallTeeth"),
-  ringMeta: document.getElementById("ringMeta"),
-  wheelMeta: document.getElementById("wheelMeta"),
   inkColour: document.getElementById("inkColour"),
   paperColour: document.getElementById("paperColour"),
   strokeWidth: document.getElementById("strokeWidth"),
   clearTrace: document.getElementById("clearTrace"),
-  resetWheel: document.getElementById("resetWheel"),
+  toggleGear: document.getElementById("toggleGear"),
   resetView: document.getElementById("resetView")
 };
 
@@ -63,6 +61,7 @@ const state = {
   strokes: [],
   activeStroke: null,
   dragging: false,
+  showGear: true,
   lastPointerAngle: 0,
   mode: "inside",
   track: "inner",
@@ -161,11 +160,6 @@ function rebuildHoles() {
 }
 
 function refreshMeta() {
-  const piece = selectedRingPiece();
-  const ringPitchDiameter = Math.round(state.bigRadius * 2);
-  const wheelPitchDiameter = Math.round(state.smallRadius * 2);
-  controls.ringMeta.textContent = `Ring ${piece.label} selected, ${state.track} track ${state.bigTeeth} teeth, pitch diameter ${ringPitchDiameter}px`;
-  controls.wheelMeta.textContent = `Wheel: ${state.smallTeeth} teeth, ${wheelHoleCount(state.smallTeeth)} holes, pitch diameter ${wheelPitchDiameter}px`;
 }
 
 function updateGeometryFromTeeth() {
@@ -319,8 +313,7 @@ function scheduleLayoutGeometrySync(options = {}) {
 function applyPanelState(open, fromUser = true) {
   state.panelOpen = open;
   layoutRoot.classList.toggle("panel-hidden", !open);
-  panelToggle.textContent = open ? "Hide controls" : "Show controls";
-  panelToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  panelTab.setAttribute("aria-expanded", open ? "true" : "false");
 
   if (fromUser) {
     if (narrowMedia.matches) {
@@ -329,14 +322,10 @@ function applyPanelState(open, fromUser = true) {
       state.userPanelPreference = open;
     }
   }
-
-  scheduleLayoutGeometrySync();
-  setTimeout(() => scheduleLayoutGeometrySync(), 210);
 }
 
 function applyViewportPanelRule() {
   const isNarrow = narrowMedia.matches;
-  layoutRoot.classList.toggle("narrow", isNarrow);
 
   if (isNarrow) {
     applyPanelState(state.narrowPanelPreference, false);
@@ -493,7 +482,7 @@ function draw() {
   applyViewportTransform();
 
   const toothDepth = currentRingToothDepth();
-  drawRingPiece();
+  if (state.showGear) drawRingPiece();
 
   drawTrace();
 
@@ -503,9 +492,9 @@ function draw() {
     state.mode === "inside"
       ? -Math.PI / state.smallTeeth
       : Math.PI - Math.PI / state.smallTeeth;
-  drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, "#2f4858", true, phi + meshPhaseOffset);
+  if (state.showGear) drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, "#2f4858", true, phi + meshPhaseOffset);
 
-  drawHoles(sc.x, sc.y, phi);
+  if (state.showGear) drawHoles(sc.x, sc.y, phi);
 }
 
 function angleDiff(a, b) {
@@ -799,9 +788,9 @@ controls.clearTrace.addEventListener("click", () => {
   draw();
 });
 
-controls.resetWheel.addEventListener("click", () => {
-  state.theta = 0;
-  state.selectedHole = -1;
+controls.toggleGear.addEventListener("click", () => {
+  state.showGear = !state.showGear;
+  controls.toggleGear.innerHTML = state.showGear ? "Hide<br>gear" : "Show<br>gear";
   draw();
 });
 
@@ -820,7 +809,7 @@ window.addEventListener("orientationchange", () => {
   scheduleLayoutGeometrySync({ fitView: true });
 });
 
-panelToggle.addEventListener("click", () => {
+panelTab.addEventListener("click", () => {
   applyPanelState(!state.panelOpen, true);
 });
 
