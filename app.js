@@ -65,7 +65,14 @@ const controls = {
   strokeWidth: document.getElementById("strokeWidth"),
   clearTrace: document.getElementById("clearTrace"),
   toggleGear: document.getElementById("toggleGear"),
-  resetView: document.getElementById("resetView")
+  resetView: document.getElementById("resetView"),
+  exportPng: document.getElementById("exportPng"),
+  helpButton: document.getElementById("helpButton"),
+  helpOverlay: document.getElementById("helpOverlay"),
+  closeHelpBtn: document.getElementById("closeHelpBtn"),
+  aboutButton: document.getElementById("aboutButton"),
+  aboutOverlay: document.getElementById("aboutOverlay"),
+  closeAboutBtn: document.getElementById("closeAboutBtn")
 };
 
 const state = {
@@ -109,6 +116,157 @@ const state = {
 
 let pendingLayoutFrame = 0;
 let cursorResetTimer = 0;
+
+function hexToRgb(hex) {
+  if (!hex) return null;
+  let value = String(hex).trim();
+  if (value.startsWith("#")) value = value.slice(1);
+  if (value.length === 3) {
+    value = value.split("").map((c) => c + c).join("");
+  }
+  if (value.length !== 6) return null;
+  const intValue = Number.parseInt(value, 16);
+  if (Number.isNaN(intValue)) return null;
+  return {
+    r: (intValue >> 16) & 255,
+    g: (intValue >> 8) & 255,
+    b: intValue & 255
+  };
+}
+
+function getTimestampSlug() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+    "-",
+    pad(now.getHours()),
+    pad(now.getMinutes()),
+    pad(now.getSeconds())
+  ].join("");
+}
+
+async function shareOrDownloadFile(filename, blob) {
+  const ua = navigator.userAgent || "";
+  const isMobile = /iPhone|iPad|iPod/i.test(ua)
+    || (ua.includes("Mac") && navigator.maxTouchPoints > 1)
+    || /Android/i.test(ua);
+
+  if (isMobile && typeof navigator.canShare === "function") {
+    const file = new File([blob], filename, { type: blob.type });
+    if (navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: filename });
+        return true;
+      } catch (error) {
+        if (error?.name === "AbortError") return false;
+      }
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  return true;
+}
+
+function exportCurrentViewAsPng() {
+  const previousShowGear = state.showGear;
+  state.showGear = false;
+  draw();
+
+  try {
+    const sourceCtx = canvas.getContext("2d", { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    if (!sourceCtx || width < 1 || height < 1) return;
+
+    const paper = hexToRgb(state.paperColour) || { r: 253, g: 233, b: 212 };
+    const tolerance = 8;
+    const data = sourceCtx.getImageData(0, 0, width, height).data;
+
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const i = (y * width + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+
+        const differsFromPaper =
+          Math.abs(r - paper.r) > tolerance
+          || Math.abs(g - paper.g) > tolerance
+          || Math.abs(b - paper.b) > tolerance
+          || a < 250;
+
+        if (!differsFromPaper) continue;
+
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+
+    if (maxX < minX || maxY < minY) {
+      return;
+    }
+
+    const pad = Math.round((window.devicePixelRatio || 1) * 18);
+    minX = Math.max(0, minX - pad);
+    minY = Math.max(0, minY - pad);
+    maxX = Math.min(width - 1, maxX + pad);
+    maxY = Math.min(height - 1, maxY + pad);
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
+
+    const out = document.createElement("canvas");
+    out.width = cropW;
+    out.height = cropH;
+    const outCtx = out.getContext("2d");
+    outCtx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+
+    out.toBlob(async (blob) => {
+      if (!blob) return;
+      await shareOrDownloadFile(`gyrograf-diagram-${getTimestampSlug()}.png`, blob);
+    }, "image/png");
+  } finally {
+    state.showGear = previousShowGear;
+    draw();
+  }
+}
+
+function openHelpModal() {
+  controls.helpOverlay.classList.add("show");
+  controls.helpOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeHelpModal() {
+  controls.helpOverlay.classList.remove("show");
+  controls.helpOverlay.setAttribute("aria-hidden", "true");
+}
+
+function openAboutModal() {
+  controls.aboutOverlay.classList.add("show");
+  controls.aboutOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeAboutModal() {
+  controls.aboutOverlay.classList.remove("show");
+  controls.aboutOverlay.setAttribute("aria-hidden", "true");
+}
 
 function selectedRingPiece() {
   return PRESETS.ringPieces.find((piece) => piece.id === state.ringPieceId) || PRESETS.ringPieces[0];
@@ -872,6 +1030,51 @@ controls.resetView.addEventListener("click", () => {
   draw();
 });
 
+controls.exportPng.addEventListener("click", () => {
+  exportCurrentViewAsPng();
+});
+
+controls.helpButton.addEventListener("click", () => {
+  openHelpModal();
+});
+
+controls.closeHelpBtn.addEventListener("click", () => {
+  closeHelpModal();
+});
+
+controls.helpOverlay.addEventListener("click", (event) => {
+  if (event.target === controls.helpOverlay) {
+    closeHelpModal();
+  }
+});
+
+controls.aboutButton.addEventListener("click", () => {
+  openAboutModal();
+});
+
+controls.closeAboutBtn.addEventListener("click", () => {
+  closeAboutModal();
+});
+
+controls.aboutOverlay.addEventListener("click", (event) => {
+  if (event.target === controls.aboutOverlay) {
+    closeAboutModal();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+
+  if (controls.helpOverlay.classList.contains("show")) {
+    closeHelpModal();
+    return;
+  }
+
+  if (controls.aboutOverlay.classList.contains("show")) {
+    closeAboutModal();
+  }
+});
+
 window.addEventListener("resize", () => {
   applyViewportPanelRule();
   scheduleLayoutGeometrySync({ fitView: true });
@@ -885,6 +1088,15 @@ window.addEventListener("orientationchange", () => {
 panelTab.addEventListener("click", () => {
   applyPanelState(!state.panelOpen, true);
 });
+
+// On narrow screens, tapping the canvas closes the panel so it doesn't obscure the drawing area.
+canvas.addEventListener("pointerdown", (event) => {
+  if (narrowMedia.matches && state.panelOpen) {
+    applyPanelState(false, true);
+    event.stopPropagation();
+    return;
+  }
+}, { capture: true });
 
 narrowMedia.addEventListener("change", () => {
   applyViewportPanelRule();

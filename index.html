@@ -18,7 +18,7 @@
   <body>
     <main class="layout" id="layoutRoot">
       <section class="panel" id="controlPanel" aria-label="Gyrograf Controls">
-        <button id="panelTab" class="panel-tab" type="button" aria-label="Toggle controls panel" aria-expanded="true"></button>
+        <button id="panelTab" class="panel-tab" type="button" aria-label="Toggle controls panel" aria-expanded="true" title="Toggle controls panel"></button>
         <div class="panel-inner">
         <img src="./images/logo.png" alt="Gyrograf" class="panel-logo" draggable="false">
         <p class="subtitle">Fresh curves, gyros-style</p>
@@ -58,6 +58,28 @@
           <button id="clearTrace" type="button">Clear<br>trace</button>
           <button id="toggleGear" type="button">Hide<br>gear</button>
           <button id="resetView" type="button">Reset<br>view</button>
+          <button id="exportPng" type="button" class="share-link-btn" title="Export current view as PNG">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+              <polyline points="8 8 12 12 16 8"></polyline>
+              <line x1="12" y1="2" x2="12" y2="12"></line>
+            </svg>
+            <span>Export PNG</span>
+          </button>
+          <button id="helpButton" type="button" title="How to Use" aria-label="How to Use">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+          </button>
+          <button id="aboutButton" type="button" title="About Gyrograf" aria-label="About Gyrograf">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="10" x2="12" y2="16"></line>
+              <line x1="12" y1="7" x2="12.01" y2="7"></line>
+            </svg>
+          </button>
         </div>
 
         </div>
@@ -67,6 +89,49 @@
         <canvas id="stage" width="1100" height="760"></canvas>
       </section>
     </main>
+
+    <div id="helpOverlay" class="help-overlay" aria-hidden="true">
+      <div class="help-content">
+        <div class="help-header">
+          <h2>How To Use Gyrograf</h2>
+          <button id="closeHelpBtn" class="help-close-btn" type="button" aria-label="Close help">&times;</button>
+        </div>
+        <div class="help-body">
+          <div class="help-section">
+            <p>Choose a ring piece, track, and wheel size from the controls.</p>
+            <p>Pick an <strong>Ink</strong> colour and <strong>Pen width</strong>, then drag a wheel hole to draw curves.</p>
+            <p>Use pinch-to-zoom on touch, mouse wheel to zoom on desktop, and drag empty space to pan.</p>
+            <p><strong>Hide Gear</strong> toggles ring and wheel visibility so you can present the clean trace.</p>
+            <p><strong>Reset View</strong> recentres and refits the current diagram.</p>
+          </div>
+          <div class="help-section">
+            <h3>Exporting</h3>
+            <p><strong>Export PNG</strong> saves the current diagram as a tightly cropped PNG. On mobile it opens the native share sheet; on desktop it downloads the file.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="aboutOverlay" class="help-overlay" aria-hidden="true">
+      <div class="help-content">
+        <div class="help-header">
+          <h2>About Gyrograf</h2>
+          <button id="closeAboutBtn" class="help-close-btn" type="button" aria-label="Close about">&times;</button>
+        </div>
+        <div class="help-body">
+          <div class="help-section">
+            <p><strong>Gyrograf</strong> is a digital simulation inspired by the classic Spirograph drawing toy system.</p>
+            <p>The original Spirograph was developed by British engineer <strong>Denys Fisher</strong> and became an iconic creative maths-and-art tool from the 1960s onward.</p>
+            <p>This app recreates that classic ring-and-wheel drawing experience in a browser, including inner/outer tracks, different wheel tooth counts, and pen-hole tracing to produce hypotrochoid and epitrochoid-style curves.</p>
+          </div>
+          <div class="help-section">
+            <h3>Credits</h3>
+            <p>&copy; 2026 Neil Kendall</p>
+            <p>Gyrograf is an independent educational simulation and is not affiliated with or endorsed by Spirograph trademark owners.</p>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script src="./app.js"></script>
     <script>
