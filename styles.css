@@ -16,6 +16,10 @@
   --safe-area-right: env(safe-area-inset-right);
 }
 
+html {
+  background: #1A2F42;
+}
+
 * {
   box-sizing: border-box;
 }
