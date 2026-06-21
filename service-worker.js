@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gyrograf-v6';
+const CACHE_NAME = 'gyrograf-v7';
 
 const ASSETS = [
   './',
