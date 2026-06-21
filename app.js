@@ -110,7 +110,7 @@ const state = {
   holes: [],
   panelOpen: true,
   userPanelPreference: null,
-  narrowPanelPreference: false,
+  narrowPanelPreference: null,
   view: {
     panX: 0,
     panY: 0,
@@ -542,11 +542,15 @@ function applyViewportPanelRule() {
   const isNarrow = narrowMedia.matches;
 
   if (isNarrow) {
-    applyPanelState(state.narrowPanelPreference, false);
+    if (state.narrowPanelPreference === null) {
+      applyPanelState(true, false);
+    } else {
+      applyPanelState(state.narrowPanelPreference, false);
+    }
     return;
   }
 
-  state.narrowPanelPreference = false;
+  state.narrowPanelPreference = null;
 
   if (state.userPanelPreference === false) {
     applyPanelState(false, false);
