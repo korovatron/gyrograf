@@ -51,7 +51,8 @@ const controls = {
   inkColour: document.getElementById("inkColour"),
   strokeWidth: document.getElementById("strokeWidth"),
   clearTrace: document.getElementById("clearTrace"),
-  resetWheel: document.getElementById("resetWheel")
+  resetWheel: document.getElementById("resetWheel"),
+  resetView: document.getElementById("resetView")
 };
 
 const state = {
@@ -77,7 +78,18 @@ const state = {
   holes: [],
   panelOpen: true,
   userPanelPreference: null,
-  narrowPanelPreference: false
+  narrowPanelPreference: false,
+  view: {
+    panX: 0,
+    panY: 0,
+    zoom: 1,
+    minZoom: 0.55,
+    maxZoom: 2.8,
+    dragMode: null,
+    lastScreenX: 0,
+    lastScreenY: 0,
+    animationFrame: 0
+  }
 };
 
 let pendingLayoutFrame = 0;
@@ -92,6 +104,14 @@ function availableWheels() {
 
 function wheelHoleCount(teeth) {
   return WHEEL_HOLE_MAP[teeth] || Math.max(5, Math.round(teeth * 0.4));
+}
+
+function currentRingToothDepth() {
+  return Math.max(TOOTH_STYLE.minDepth, Math.min(TOOTH_STYLE.maxDepth, state.toothPitch * TOOTH_STYLE.depthScale));
+}
+
+function currentWheelToothDepth() {
+  return currentRingToothDepth() * 0.92;
 }
 
 function syncTrackOptions() {
@@ -180,6 +200,45 @@ function resizeCanvas() {
   state.centre.x = bounds.width / 2;
   state.centre.y = bounds.height / 2;
   return true;
+}
+
+function canvasPointFromClient(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top
+  };
+}
+
+function screenToWorld(clientX, clientY) {
+  const screen = canvasPointFromClient(clientX, clientY);
+  return {
+    x: state.centre.x + (screen.x - state.centre.x - state.view.panX) / state.view.zoom,
+    y: state.centre.y + (screen.y - state.centre.y - state.view.panY) / state.view.zoom
+  };
+}
+
+function applyViewportTransform() {
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
+  ctx.scale(state.view.zoom, state.view.zoom);
+  ctx.translate(-state.centre.x, -state.centre.y);
+}
+
+function setZoomAt(clientX, clientY, nextZoom) {
+  const screen = canvasPointFromClient(clientX, clientY);
+  const world = screenToWorld(clientX, clientY);
+  state.view.zoom = Math.max(state.view.minZoom, Math.min(state.view.maxZoom, nextZoom));
+  state.view.panX = screen.x - state.centre.x - (world.x - state.centre.x) * state.view.zoom;
+  state.view.panY = screen.y - state.centre.y - (world.y - state.centre.y) * state.view.zoom;
+}
+
+function cancelViewAnimation() {
+  if (state.view.animationFrame) {
+    cancelAnimationFrame(state.view.animationFrame);
+    state.view.animationFrame = 0;
+  }
 }
 
 function syncLayoutGeometry() {
@@ -336,7 +395,7 @@ function traceToothTrackPath(x, y, pitchRadius, toothDepth, toothCount, directio
 }
 
 function drawRingPiece() {
-  const toothDepth = Math.max(TOOTH_STYLE.minDepth, Math.min(TOOTH_STYLE.maxDepth, state.toothPitch * TOOTH_STYLE.depthScale));
+  const toothDepth = currentRingToothDepth();
   const piece = selectedRingPiece();
 
   ctx.beginPath();
@@ -375,8 +434,9 @@ function drawHoles(cx, cy, phi) {
     const y = cy + Math.sin(phi + hole.a) * hole.r;
     ctx.beginPath();
     ctx.arc(x, y, i === state.selectedHole ? 4.6 : 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = i === state.selectedHole ? "#de6e4b" : "#364152";
-    ctx.fill();
+    ctx.strokeStyle = i === state.selectedHole ? "#de6e4b" : "#364152";
+    ctx.lineWidth = i === state.selectedHole ? 1.8 : 1.2;
+    ctx.stroke();
     if (i === state.selectedHole) {
       ctx.beginPath();
       ctx.arc(x, y, 9.5, 0, Math.PI * 2);
@@ -389,9 +449,12 @@ function drawHoles(cx, cy, phi) {
 
 function draw() {
   const { width, height } = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
+  applyViewportTransform();
 
-  const toothDepth = Math.max(TOOTH_STYLE.minDepth, Math.min(TOOTH_STYLE.maxDepth, state.toothPitch * TOOTH_STYLE.depthScale));
+  const toothDepth = currentRingToothDepth();
   drawRingPiece();
 
   drawTrace();
@@ -402,7 +465,7 @@ function draw() {
     state.mode === "inside"
       ? -Math.PI / state.smallTeeth
       : Math.PI - Math.PI / state.smallTeeth;
-  drawCogRing(sc.x, sc.y, state.smallRadius, toothDepth * 0.92, state.smallTeeth, "#000000", true, phi + meshPhaseOffset);
+  drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, "#000000", true, phi + meshPhaseOffset);
 
   drawHoles(sc.x, sc.y, phi);
 }
@@ -415,13 +478,13 @@ function angleDiff(a, b) {
 }
 
 function screenToCanvas(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: clientX - rect.left, y: clientY - rect.top };
+  return canvasPointFromClient(clientX, clientY);
 }
 
 function nearestHole(point) {
   let best = -1;
   let bestD = 1e9;
+  const hitRadius = 14 / state.view.zoom;
   for (let i = 0; i < state.holes.length; i += 1) {
     const hp = holeWorldPosition(i);
     if (!hp) continue;
@@ -431,7 +494,89 @@ function nearestHole(point) {
       best = i;
     }
   }
-  return bestD <= 14 ? best : -1;
+  return bestD <= hitRadius ? best : -1;
+}
+
+function getContentBounds() {
+  const ringDepth = currentRingToothDepth();
+  const wheelDepth = currentWheelToothDepth();
+  const ringRadius = state.ringOuterRadius + ringDepth;
+  const wheelRadius = state.smallRadius + wheelDepth;
+  const orbitRadius = currentDistance() + wheelRadius;
+  const envelopeRadius = Math.max(ringRadius, orbitRadius);
+  const bounds = {
+    minX: state.centre.x - envelopeRadius,
+    minY: state.centre.y - envelopeRadius,
+    maxX: state.centre.x + envelopeRadius,
+    maxY: state.centre.y + envelopeRadius
+  };
+
+  for (let s = 0; s < state.strokes.length; s += 1) {
+    const stroke = state.strokes[s];
+    for (let i = 0; i < stroke.points.length; i += 1) {
+      const point = stroke.points[i];
+      if (point.x < bounds.minX) bounds.minX = point.x;
+      if (point.y < bounds.minY) bounds.minY = point.y;
+      if (point.x > bounds.maxX) bounds.maxX = point.x;
+      if (point.y > bounds.maxY) bounds.maxY = point.y;
+    }
+  }
+
+  return bounds;
+}
+
+function fitViewToContent(animate = false) {
+  const bounds = getContentBounds();
+  const viewport = canvas.parentElement.getBoundingClientRect();
+  const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+  const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+  const padding = 0.12;
+  const targetZoom = Math.min(
+    state.view.maxZoom,
+    Math.max(
+      state.view.minZoom,
+      Math.min(
+        (viewport.width * (1 - padding)) / contentWidth,
+        (viewport.height * (1 - padding)) / contentHeight
+      )
+    )
+  );
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  const targetPanX = -(centerX - state.centre.x) * targetZoom;
+  const targetPanY = -(centerY - state.centre.y) * targetZoom;
+
+  if (!animate) {
+    cancelViewAnimation();
+    state.view.zoom = targetZoom;
+    state.view.panX = targetPanX;
+    state.view.panY = targetPanY;
+    return;
+  }
+
+  cancelViewAnimation();
+  const startZoom = state.view.zoom;
+  const startPanX = state.view.panX;
+  const startPanY = state.view.panY;
+  const duration = 320;
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+  const startTime = performance.now();
+
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startTime) / duration);
+    const eased = easeOutCubic(progress);
+    state.view.zoom = startZoom + (targetZoom - startZoom) * eased;
+    state.view.panX = startPanX + (targetPanX - startPanX) * eased;
+    state.view.panY = startPanY + (targetPanY - startPanY) * eased;
+    draw();
+    if (progress < 1) {
+      state.view.animationFrame = requestAnimationFrame(tick);
+    } else {
+      state.view.animationFrame = 0;
+    }
+  };
+
+  state.view.animationFrame = requestAnimationFrame(tick);
 }
 
 function pushTracePoint() {
@@ -461,27 +606,55 @@ function pushInterpolatedTrace(deltaTheta) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
-  const p = screenToCanvas(event.clientX, event.clientY);
-  const holeIndex = nearestHole(p);
-  if (holeIndex < 0) return;
+  cancelViewAnimation();
+  const screenPoint = screenToCanvas(event.clientX, event.clientY);
+  const worldPoint = screenToWorld(event.clientX, event.clientY);
+  const holeIndex = nearestHole(worldPoint);
+  state.view.lastScreenX = screenPoint.x;
+  state.view.lastScreenY = screenPoint.y;
+
+  if (holeIndex >= 0) {
+    state.dragging = true;
+    state.selectedHole = holeIndex;
+    state.view.dragMode = "wheel";
+    state.activeStroke = {
+      colour: state.inkColour,
+      width: state.strokeWidth,
+      points: []
+    };
+    state.strokes.push(state.activeStroke);
+    state.lastPointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
+    canvas.setPointerCapture(event.pointerId);
+    pushTracePoint();
+    draw();
+    return;
+  }
+
   state.dragging = true;
-  state.selectedHole = holeIndex;
-  state.activeStroke = {
-    colour: state.inkColour,
-    width: state.strokeWidth,
-    points: []
-  };
-  state.strokes.push(state.activeStroke);
-  state.lastPointerAngle = Math.atan2(p.y - state.centre.y, p.x - state.centre.x);
+  state.view.dragMode = "pan";
+  state.selectedHole = -1;
+  state.activeStroke = null;
   canvas.setPointerCapture(event.pointerId);
-  pushTracePoint();
   draw();
 });
 
 canvas.addEventListener("pointermove", (event) => {
   if (!state.dragging) return;
-  const p = screenToCanvas(event.clientX, event.clientY);
-  const pointerAngle = Math.atan2(p.y - state.centre.y, p.x - state.centre.x);
+  const screenPoint = screenToCanvas(event.clientX, event.clientY);
+
+  if (state.view.dragMode === "pan") {
+    const dx = screenPoint.x - state.view.lastScreenX;
+    const dy = screenPoint.y - state.view.lastScreenY;
+    state.view.panX += dx;
+    state.view.panY += dy;
+    state.view.lastScreenX = screenPoint.x;
+    state.view.lastScreenY = screenPoint.y;
+    draw();
+    return;
+  }
+
+  const worldPoint = screenToWorld(event.clientX, event.clientY);
+  const pointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
   const delta = angleDiff(pointerAngle, state.lastPointerAngle);
   state.lastPointerAngle = pointerAngle;
 
@@ -492,6 +665,7 @@ canvas.addEventListener("pointermove", (event) => {
 function stopDrag(event) {
   if (!state.dragging) return;
   state.dragging = false;
+  state.view.dragMode = null;
   if (state.activeStroke && state.activeStroke.points.length < 2) {
     state.strokes.pop();
   }
@@ -507,6 +681,14 @@ canvas.addEventListener("pointerleave", () => {
   if (state.dragging) draw();
 });
 
+canvas.addEventListener("wheel", (event) => {
+  cancelViewAnimation();
+  event.preventDefault();
+  const zoomFactor = Math.exp(-event.deltaY * 0.0012);
+  setZoomAt(event.clientX, event.clientY, state.view.zoom * zoomFactor);
+  draw();
+}, { passive: false });
+
 controls.ringPiece.addEventListener("change", () => {
   state.ringPieceId = controls.ringPiece.value;
   syncTrackOptions();
@@ -515,6 +697,7 @@ controls.ringPiece.addEventListener("change", () => {
   updateGeometryFromTeeth();
   rebuildHoles();
   refreshMeta();
+  fitViewToContent();
   draw();
 });
 
@@ -524,6 +707,7 @@ controls.track.addEventListener("change", () => {
   updateGeometryFromTeeth();
   rebuildHoles();
   refreshMeta();
+  fitViewToContent();
   draw();
 });
 
@@ -532,6 +716,7 @@ controls.smallTeeth.addEventListener("change", () => {
   updateGeometryFromTeeth();
   rebuildHoles();
   refreshMeta();
+  fitViewToContent();
   draw();
 });
 
@@ -554,6 +739,11 @@ controls.clearTrace.addEventListener("click", () => {
 controls.resetWheel.addEventListener("click", () => {
   state.theta = 0;
   state.selectedHole = -1;
+  draw();
+});
+
+controls.resetView.addEventListener("click", () => {
+  fitViewToContent(true);
   draw();
 });
 
@@ -594,6 +784,8 @@ function init() {
 
   applyViewportPanelRule();
   syncLayoutGeometry();
+  fitViewToContent();
+  draw();
 }
 
 init();
