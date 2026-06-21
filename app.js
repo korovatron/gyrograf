@@ -677,6 +677,8 @@ function drawHoles(cx, cy, phi) {
     const y = cy + Math.sin(phi + hole.a) * hole.r;
     ctx.beginPath();
     ctx.arc(x, y, i === state.selectedHole ? 4.6 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = state.paperColour;
+    ctx.fill();
     ctx.strokeStyle = i === state.selectedHole ? state.inkColour : HOLE_STROKE_COLOR;
     ctx.lineWidth = i === state.selectedHole ? 1.8 : 1.2;
     ctx.stroke();
