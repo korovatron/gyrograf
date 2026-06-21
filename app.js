@@ -13,6 +13,14 @@ const PRESETS = {
   wheels: [24, 30, 32, 36, 40, 42, 45, 48, 50, 52, 56, 60, 63, 64, 72, 75, 80, 84]
 };
 
+const TOOTH_STYLE = {
+  rootFactor: 0.55,
+  depthScale: 0.42,
+  minDepth: 4,
+  maxDepth: 11,
+  peakFraction: 0.5
+};
+
 const controls = {
   ringPiece: document.getElementById("ringPiece"),
   track: document.getElementById("track"),
@@ -256,21 +264,19 @@ function smallRotation() {
 }
 
 function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false) {
-  const outer = radius + toothDepth;
-  const inner = radius - toothDepth * 0.2;
+  const tipRadius = radius + toothDepth;
+  const rootRadius = radius - toothDepth * TOOTH_STYLE.rootFactor;
   const step = (Math.PI * 2) / toothCount;
   ctx.beginPath();
   for (let i = 0; i < toothCount; i += 1) {
     const a0 = i * step;
-    const a1 = a0 + step * 0.5;
+    const aPeak = a0 + step * TOOTH_STYLE.peakFraction;
     const a2 = a0 + step;
     if (i === 0) {
-      ctx.moveTo(x + Math.cos(a0) * inner, y + Math.sin(a0) * inner);
+      ctx.moveTo(x + Math.cos(a0) * rootRadius, y + Math.sin(a0) * rootRadius);
     }
-    ctx.lineTo(x + Math.cos(a0) * outer, y + Math.sin(a0) * outer);
-    ctx.lineTo(x + Math.cos(a1) * outer, y + Math.sin(a1) * outer);
-    ctx.lineTo(x + Math.cos(a1) * inner, y + Math.sin(a1) * inner);
-    ctx.lineTo(x + Math.cos(a2) * inner, y + Math.sin(a2) * inner);
+    ctx.lineTo(x + Math.cos(aPeak) * tipRadius, y + Math.sin(aPeak) * tipRadius);
+    ctx.lineTo(x + Math.cos(a2) * rootRadius, y + Math.sin(a2) * rootRadius);
   }
   ctx.closePath();
   ctx.strokeStyle = colour;
@@ -285,12 +291,14 @@ function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false)
 function traceToothTrackPath(x, y, pitchRadius, toothDepth, toothCount, direction = "out") {
   const step = (Math.PI * 2) / toothCount;
   const tipRadius = direction === "out" ? pitchRadius + toothDepth : pitchRadius - toothDepth;
-  const rootRadius = direction === "out" ? pitchRadius - toothDepth * 0.55 : pitchRadius + toothDepth * 0.55;
-  const peakFraction = 0.5;
+  const rootRadius =
+    direction === "out"
+      ? pitchRadius - toothDepth * TOOTH_STYLE.rootFactor
+      : pitchRadius + toothDepth * TOOTH_STYLE.rootFactor;
 
   for (let i = 0; i < toothCount; i += 1) {
     const a0 = i * step;
-    const aPeak = a0 + step * peakFraction;
+    const aPeak = a0 + step * TOOTH_STYLE.peakFraction;
     const a2 = a0 + step;
     if (i === 0) {
       ctx.moveTo(x + Math.cos(a0) * rootRadius, y + Math.sin(a0) * rootRadius);
@@ -302,7 +310,7 @@ function traceToothTrackPath(x, y, pitchRadius, toothDepth, toothCount, directio
 }
 
 function drawRingPiece() {
-  const toothDepth = Math.max(4, Math.min(11, state.toothPitch * 0.42));
+  const toothDepth = Math.max(TOOTH_STYLE.minDepth, Math.min(TOOTH_STYLE.maxDepth, state.toothPitch * TOOTH_STYLE.depthScale));
   const piece = selectedRingPiece();
 
   ctx.beginPath();
@@ -357,7 +365,7 @@ function draw() {
   const { width, height } = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, width, height);
 
-  const toothDepth = Math.max(4, Math.min(11, state.toothPitch * 0.42));
+  const toothDepth = Math.max(TOOTH_STYLE.minDepth, Math.min(TOOTH_STYLE.maxDepth, state.toothPitch * TOOTH_STYLE.depthScale));
   drawRingPiece();
 
   drawTrace();
