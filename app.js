@@ -95,7 +95,7 @@ const state = {
   ringInnerRadius: 160,
   toothPitch: 1,
   inkColour: "#ff0000",
-  paperColour: "#fde9d4",
+  paperColour: "#ffffff",
   strokeWidth: 2,
   holes: [],
   panelOpen: true,
