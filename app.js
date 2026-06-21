@@ -285,25 +285,24 @@ function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false)
 function traceToothTrackPath(x, y, pitchRadius, toothDepth, toothCount, direction = "out") {
   const step = (Math.PI * 2) / toothCount;
   const tipRadius = direction === "out" ? pitchRadius + toothDepth : pitchRadius - toothDepth;
-  const rootRadius = direction === "out" ? pitchRadius - toothDepth * 0.32 : pitchRadius + toothDepth * 0.32;
+  const rootRadius = direction === "out" ? pitchRadius - toothDepth * 0.55 : pitchRadius + toothDepth * 0.55;
+  const peakFraction = 0.5;
 
   for (let i = 0; i < toothCount; i += 1) {
     const a0 = i * step;
-    const a1 = a0 + step * 0.5;
+    const aPeak = a0 + step * peakFraction;
     const a2 = a0 + step;
     if (i === 0) {
       ctx.moveTo(x + Math.cos(a0) * rootRadius, y + Math.sin(a0) * rootRadius);
     }
-    ctx.lineTo(x + Math.cos(a0) * tipRadius, y + Math.sin(a0) * tipRadius);
-    ctx.lineTo(x + Math.cos(a1) * tipRadius, y + Math.sin(a1) * tipRadius);
-    ctx.lineTo(x + Math.cos(a1) * rootRadius, y + Math.sin(a1) * rootRadius);
+    ctx.lineTo(x + Math.cos(aPeak) * tipRadius, y + Math.sin(aPeak) * tipRadius);
     ctx.lineTo(x + Math.cos(a2) * rootRadius, y + Math.sin(a2) * rootRadius);
   }
   ctx.closePath();
 }
 
 function drawRingPiece() {
-  const toothDepth = Math.max(3, Math.min(8, state.toothPitch * 0.26));
+  const toothDepth = Math.max(4, Math.min(11, state.toothPitch * 0.42));
   const piece = selectedRingPiece();
 
   ctx.beginPath();
@@ -358,7 +357,7 @@ function draw() {
   const { width, height } = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, width, height);
 
-  const toothDepth = Math.max(3, Math.min(8, state.toothPitch * 0.26));
+  const toothDepth = Math.max(4, Math.min(11, state.toothPitch * 0.42));
   drawRingPiece();
 
   drawTrace();
