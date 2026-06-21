@@ -153,6 +153,27 @@
         navigator.serviceWorker.register('./service-worker.js', { scope: './' })
           .catch((err) => console.error('Service Worker registration failed:', err));
       }
+
+      (function loadAnalyticsAfterStartup() {
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        const loadDelayMs = isStandalone ? 6000 : 1500;
+
+        window.addEventListener('load', () => {
+          window.setTimeout(() => {
+            const script = document.createElement('script');
+            script.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+            script.async = true;
+            script.setAttribute('data-cf-beacon', '{"token":"3fd947bc782243ada1dbd315a9feca0e"}');
+
+            const appendScript = () => document.head.appendChild(script);
+            if ('requestIdleCallback' in window) {
+              requestIdleCallback(appendScript, { timeout: 3000 });
+            } else {
+              appendScript();
+            }
+          }, loadDelayMs);
+        }, { once: true });
+      })();
     </script>
   </body>
 </html>
