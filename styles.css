@@ -283,9 +283,19 @@ button {
   transition: background 0.2s ease;
 }
 
+button.is-off {
+  background: #556270;
+  color: rgba(232, 244, 253, 0.72);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
 @media (hover: hover) {
   button:hover {
     background: #354d6b;
+  }
+
+  button.is-off:hover {
+    background: #5f6b78;
   }
 }
 

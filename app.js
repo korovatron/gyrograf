@@ -300,6 +300,11 @@ function closeExportModal() {
   controls.exportOverlay.setAttribute("aria-hidden", "true");
 }
 
+function syncGearToggleButton() {
+  controls.toggleGear.innerHTML = state.showGear ? "HIDE<br>WHEELS" : "SHOW<br>WHEELS";
+  controls.toggleGear.classList.toggle("is-off", !state.showGear);
+}
+
 function selectedRingPiece() {
   return PRESETS.ringPieces.find((piece) => piece.id === state.ringPieceId) || PRESETS.ringPieces[0];
 }
@@ -1068,7 +1073,7 @@ controls.clearTrace.addEventListener("click", () => {
 
 controls.toggleGear.addEventListener("click", () => {
   state.showGear = !state.showGear;
-  controls.toggleGear.innerHTML = state.showGear ? "Hide<br>gear" : "Show<br>gear";
+  syncGearToggleButton();
   draw();
 });
 
@@ -1190,6 +1195,7 @@ function init() {
   state.inkColour = controls.inkColour.value;
   state.paperColour = controls.paperColour.value;
   state.strokeWidth = Number(controls.strokeWidth.value);
+  syncGearToggleButton();
 
   applyViewportPanelRule();
   syncLayoutGeometry();
