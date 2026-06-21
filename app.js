@@ -56,13 +56,13 @@ const WHEEL_HOLE_MAP = {
   84: 35
 };
 
-const GEAR_FILL_COLOR = "rgba(214, 224, 235, 0.34)";
-const GEAR_STROKE_COLOR = "#7A8898";
+const GEAR_FILL_COLOR = "rgba(196, 214, 231, 0.38)";
+const GEAR_STROKE_COLOR = "#6E8092";
 const HOLE_STROKE_COLOR = "#6F7D8D";
 
 const controls = {
-  ringPiece: document.getElementById("ringPiece"),
-  track: document.getElementById("track"),
+  ringPiece: null, // Will be set via radio buttons
+  track: null, // Will be set via radio buttons
   smallTeeth: document.getElementById("smallTeeth"),
   inkColour: document.getElementById("inkColour"),
   paperColour: document.getElementById("paperColour"),
@@ -76,7 +76,13 @@ const controls = {
   closeHelpBtn: document.getElementById("closeHelpBtn"),
   aboutButton: document.getElementById("aboutButton"),
   aboutOverlay: document.getElementById("aboutOverlay"),
-  closeAboutBtn: document.getElementById("closeAboutBtn")
+  closeAboutBtn: document.getElementById("closeAboutBtn"),
+  trackOptions: document.getElementById("trackOptions"),
+  exportOverlay: document.getElementById("exportOverlay"),
+  closeExportBtn: document.getElementById("closeExportBtn"),
+  exportIncludeGear: document.getElementById("exportIncludeGear"),
+  exportTransparent: document.getElementById("exportTransparent"),
+  doExportBtn: document.getElementById("doExportBtn")
 };
 
 const state = {
@@ -181,10 +187,11 @@ async function shareOrDownloadFile(filename, blob) {
   return true;
 }
 
-function exportCurrentViewAsPng() {
+function exportCurrentViewAsPng(options = {}) {
+  const { includeGear = true, transparent = false } = options;
   const previousShowGear = state.showGear;
-  state.showGear = false;
-  draw();
+  state.showGear = includeGear;
+  draw(!transparent);
 
   try {
     const sourceCtx = canvas.getContext("2d", { willReadFrequently: true });
@@ -215,7 +222,11 @@ function exportCurrentViewAsPng() {
           || Math.abs(b - paper.b) > tolerance
           || a < 250;
 
-        if (!differsFromPaper) continue;
+        if (transparent) {
+          if (a < 5) continue;
+        } else if (!differsFromPaper) {
+          continue;
+        }
 
         if (x < minX) minX = x;
         if (y < minY) minY = y;
@@ -240,7 +251,14 @@ function exportCurrentViewAsPng() {
     out.width = cropW;
     out.height = cropH;
     const outCtx = out.getContext("2d");
-    outCtx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    
+    if (transparent) {
+      outCtx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    } else {
+      outCtx.fillStyle = state.paperColour;
+      outCtx.fillRect(0, 0, cropW, cropH);
+      outCtx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    }
 
     out.toBlob(async (blob) => {
       if (!blob) return;
@@ -272,6 +290,16 @@ function closeAboutModal() {
   controls.aboutOverlay.setAttribute("aria-hidden", "true");
 }
 
+function openExportModal() {
+  controls.exportOverlay.classList.add("show");
+  controls.exportOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeExportModal() {
+  controls.exportOverlay.classList.remove("show");
+  controls.exportOverlay.setAttribute("aria-hidden", "true");
+}
+
 function selectedRingPiece() {
   return PRESETS.ringPieces.find((piece) => piece.id === state.ringPieceId) || PRESETS.ringPieces[0];
 }
@@ -294,14 +322,19 @@ function currentWheelToothDepth() {
 
 function syncTrackOptions() {
   const piece = selectedRingPiece();
-  controls.track.innerHTML = [
+  controls.trackOptions.innerHTML = [
     { value: "inner", label: `Inner (${piece.innerTeeth} teeth)` },
     { value: "outer", label: `Outer (${piece.outerTeeth} teeth)` }
   ]
-    .map((item) => `<option value="${item.value}">${item.label}</option>`)
+    .map((item) => `<label><input type="radio" name="track" value="${item.value}" /> ${item.label}</label>`)
     .join("");
 
-  controls.track.value = state.track;
+  // Set the checked radio button
+  const trackRadio = document.querySelector(`input[name="track"][value="${state.track}"]`);
+  if (trackRadio) trackRadio.checked = true;
+  
+  // Attach event listeners to the newly created radio buttons
+  attachTrackListener();
 }
 
 function syncWheelOptions() {
@@ -648,13 +681,15 @@ function drawHoles(cx, cy, phi) {
   }
 }
 
-function draw() {
+function draw(fillBackground = true) {
   const { width, height } = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = state.paperColour;
-  ctx.fillRect(0, 0, width, height);
+  if (fillBackground) {
+    ctx.fillStyle = state.paperColour;
+    ctx.fillRect(0, 0, width, height);
+  }
   applyViewportTransform();
 
   const toothDepth = currentRingToothDepth();
@@ -971,27 +1006,35 @@ canvas.addEventListener("wheel", (event) => {
   draw();
 }, { passive: false });
 
-controls.ringPiece.addEventListener("change", () => {
-  state.ringPieceId = controls.ringPiece.value;
-  syncTrackOptions();
-  updateGeometryFromTeeth();
-  syncWheelOptions();
-  updateGeometryFromTeeth();
-  rebuildHoles();
-  refreshMeta();
-  fitViewToContent();
-  draw();
+// Ring piece radio buttons
+document.querySelectorAll('input[name="ringPiece"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    state.ringPieceId = radio.value;
+    syncTrackOptions();
+    updateGeometryFromTeeth();
+    syncWheelOptions();
+    updateGeometryFromTeeth();
+    rebuildHoles();
+    refreshMeta();
+    fitViewToContent();
+    draw();
+  });
 });
 
-controls.track.addEventListener("change", () => {
-  state.track = controls.track.value;
-  syncWheelOptions();
-  updateGeometryFromTeeth();
-  rebuildHoles();
-  refreshMeta();
-  fitViewToContent();
-  draw();
-});
+// Track radio buttons (re-attached each time syncTrackOptions is called)
+function attachTrackListener() {
+  document.querySelectorAll('input[name="track"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      state.track = radio.value;
+      syncWheelOptions();
+      updateGeometryFromTeeth();
+      rebuildHoles();
+      refreshMeta();
+      fitViewToContent();
+      draw();
+    });
+  });
+}
 
 controls.smallTeeth.addEventListener("change", () => {
   state.smallTeeth = Number(controls.smallTeeth.value);
@@ -1035,7 +1078,7 @@ controls.resetView.addEventListener("click", () => {
 });
 
 controls.exportPng.addEventListener("click", () => {
-  exportCurrentViewAsPng();
+  openExportModal();
 });
 
 controls.helpButton.addEventListener("click", () => {
@@ -1064,6 +1107,23 @@ controls.aboutOverlay.addEventListener("click", (event) => {
   if (event.target === controls.aboutOverlay) {
     closeAboutModal();
   }
+});
+
+controls.closeExportBtn.addEventListener("click", () => {
+  closeExportModal();
+});
+
+controls.exportOverlay.addEventListener("click", (event) => {
+  if (event.target === controls.exportOverlay) {
+    closeExportModal();
+  }
+});
+
+controls.doExportBtn.addEventListener("click", () => {
+  const includeGear = controls.exportIncludeGear.checked;
+  const transparent = controls.exportTransparent.checked;
+  closeExportModal();
+  exportCurrentViewAsPng({ includeGear, transparent });
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1115,14 +1175,16 @@ stageResizeObserver.observe(canvas.parentElement);
 stageResizeObserver.observe(controlPanel);
 
 function init() {
-  controls.ringPiece.innerHTML = PRESETS.ringPieces
-    .map((piece) => `<option value="${piece.id}">${piece.label} ring</option>`)
-    .join("");
-  controls.ringPiece.value = state.ringPieceId;
+  // Set initial ring piece radio button
+  const ringRadio = document.querySelector(`input[name="ringPiece"][value="${state.ringPieceId}"]`);
+  if (ringRadio) ringRadio.checked = true;
 
   syncTrackOptions();
-  state.track = controls.track.value;
-  state.ringPieceId = controls.ringPiece.value;
+  
+  // Get track value from checked radio button
+  const trackRadio = document.querySelector('input[name="track"]:checked');
+  if (trackRadio) state.track = trackRadio.value;
+  
   syncWheelOptions();
   state.smallTeeth = Number(controls.smallTeeth.value);
   state.inkColour = controls.inkColour.value;
