@@ -85,6 +85,49 @@ const controls = {
   doExportBtn: document.getElementById("doExportBtn")
 };
 
+function canUseNativeFileShare() {
+  const isTouchPrimaryPointer = window.matchMedia("(pointer: coarse)").matches;
+  if (!isTouchPrimaryPointer) return false;
+
+  if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function") return false;
+
+  try {
+    const testFile = new File([new Blob(["x"], { type: "text/plain" })], "gyrograf-share-check.txt", { type: "text/plain" });
+    return navigator.canShare({ files: [testFile] });
+  } catch (_) {
+    return false;
+  }
+}
+
+function syncExportActionLabels() {
+  const preferShareLabel = canUseNativeFileShare();
+  const primaryText = preferShareLabel ? "SHARE IMAGE" : "EXPORT IMAGE";
+  const primaryTitle = preferShareLabel
+    ? "Share or export current view as PNG"
+    : "Export current view as PNG";
+  const primaryIconMarkup = preferShareLabel
+    ? '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 8 12 4 8 8"></polyline><line x1="12" y1="4" x2="12" y2="14"></line>'
+    : '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="8 8 12 12 16 8"></polyline><line x1="12" y1="2" x2="12" y2="12"></line>';
+
+  const exportButtonLabel = controls.exportPng?.querySelector("span");
+  if (exportButtonLabel) {
+    exportButtonLabel.textContent = primaryText;
+  }
+
+  const exportButtonIcon = controls.exportPng?.querySelector("svg");
+  if (exportButtonIcon) {
+    exportButtonIcon.innerHTML = primaryIconMarkup;
+  }
+
+  controls.exportPng?.setAttribute("title", primaryTitle);
+  controls.exportPng?.setAttribute("aria-label", primaryTitle);
+
+  if (controls.doExportBtn) {
+    controls.doExportBtn.textContent = primaryText;
+    controls.doExportBtn.setAttribute("aria-label", primaryTitle);
+  }
+}
+
 const state = {
   centre: { x: 0, y: 0 },
   theta: 0,
@@ -159,12 +202,7 @@ function getTimestampSlug() {
 }
 
 async function shareOrDownloadFile(filename, blob) {
-  const ua = navigator.userAgent || "";
-  const isMobile = /iPhone|iPad|iPod/i.test(ua)
-    || (ua.includes("Mac") && navigator.maxTouchPoints > 1)
-    || /Android/i.test(ua);
-
-  if (isMobile && typeof navigator.canShare === "function") {
+  if (canUseNativeFileShare()) {
     const file = new File([blob], filename, { type: blob.type });
     if (navigator.canShare({ files: [file] })) {
       try {
@@ -291,6 +329,7 @@ function closeAboutModal() {
 }
 
 function openExportModal() {
+  syncExportActionLabels();
   controls.exportOverlay.classList.add("show");
   controls.exportOverlay.setAttribute("aria-hidden", "false");
 }
@@ -1136,6 +1175,8 @@ controls.doExportBtn.addEventListener("click", () => {
   closeExportModal();
   exportCurrentViewAsPng({ includeGear, transparent });
 });
+
+syncExportActionLabels();
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
