@@ -49,6 +49,7 @@ const controls = {
   ringMeta: document.getElementById("ringMeta"),
   wheelMeta: document.getElementById("wheelMeta"),
   inkColour: document.getElementById("inkColour"),
+  paperColour: document.getElementById("paperColour"),
   strokeWidth: document.getElementById("strokeWidth"),
   clearTrace: document.getElementById("clearTrace"),
   resetWheel: document.getElementById("resetWheel"),
@@ -73,7 +74,8 @@ const state = {
   ringOuterRadius: 230,
   ringInnerRadius: 160,
   toothPitch: 1,
-  inkColour: "#0f172a",
+  inkColour: "#ff0000",
+  paperColour: "#fde9d4",
   strokeWidth: 2,
   holes: [],
   panelOpen: true,
@@ -93,6 +95,7 @@ const state = {
 };
 
 let pendingLayoutFrame = 0;
+let cursorResetTimer = 0;
 
 function selectedRingPiece() {
   return PRESETS.ringPieces.find((piece) => piece.id === state.ringPieceId) || PRESETS.ringPieces[0];
@@ -241,7 +244,36 @@ function cancelViewAnimation() {
   }
 }
 
-function syncLayoutGeometry() {
+function updateCanvasCursor(clientX = null, clientY = null) {
+  if (state.dragging) {
+    canvas.style.cursor = "grabbing";
+    return;
+  }
+
+  if (clientX === null || clientY === null) {
+    canvas.style.cursor = "grab";
+    return;
+  }
+
+  const worldPoint = screenToWorld(clientX, clientY);
+  const holeIndex = nearestHole(worldPoint);
+  canvas.style.cursor = holeIndex >= 0 ? "pointer" : "grab";
+}
+
+function flashZoomCursor(deltaY) {
+  if (cursorResetTimer) {
+    clearTimeout(cursorResetTimer);
+  }
+
+  canvas.style.cursor = deltaY < 0 ? "zoom-in" : "zoom-out";
+  cursorResetTimer = setTimeout(() => {
+    cursorResetTimer = 0;
+    updateCanvasCursor(state.view.lastScreenX, state.view.lastScreenY);
+  }, 140);
+}
+
+function syncLayoutGeometry(options = {}) {
+  const { fitView = false } = options;
   const oldCentre = { x: state.centre.x, y: state.centre.y };
   const oldOuterRadius = state.ringOuterRadius;
 
@@ -267,16 +299,20 @@ function syncLayoutGeometry() {
 
   rebuildHoles();
   refreshMeta();
+  if (fitView) {
+    fitViewToContent();
+  }
   draw();
 }
 
-function scheduleLayoutGeometrySync() {
+function scheduleLayoutGeometrySync(options = {}) {
   if (pendingLayoutFrame) {
     cancelAnimationFrame(pendingLayoutFrame);
   }
+  const { fitView = false } = options;
   pendingLayoutFrame = requestAnimationFrame(() => {
     pendingLayoutFrame = 0;
-    syncLayoutGeometry();
+    syncLayoutGeometry({ fitView });
   });
 }
 
@@ -295,7 +331,7 @@ function applyPanelState(open, fromUser = true) {
   }
 
   scheduleLayoutGeometrySync();
-  setTimeout(scheduleLayoutGeometrySync, 210);
+  setTimeout(() => scheduleLayoutGeometrySync(), 210);
 }
 
 function applyViewportPanelRule() {
@@ -434,13 +470,13 @@ function drawHoles(cx, cy, phi) {
     const y = cy + Math.sin(phi + hole.a) * hole.r;
     ctx.beginPath();
     ctx.arc(x, y, i === state.selectedHole ? 4.6 : 3.5, 0, Math.PI * 2);
-    ctx.strokeStyle = i === state.selectedHole ? "#de6e4b" : "#364152";
+    ctx.strokeStyle = i === state.selectedHole ? state.inkColour : "#364152";
     ctx.lineWidth = i === state.selectedHole ? 1.8 : 1.2;
     ctx.stroke();
     if (i === state.selectedHole) {
       ctx.beginPath();
       ctx.arc(x, y, 9.5, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(222, 110, 75, 0.55)";
+      ctx.strokeStyle = state.inkColour;
       ctx.lineWidth = 1.3;
       ctx.stroke();
     }
@@ -452,6 +488,8 @@ function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = state.paperColour;
+  ctx.fillRect(0, 0, width, height);
   applyViewportTransform();
 
   const toothDepth = currentRingToothDepth();
@@ -465,7 +503,7 @@ function draw() {
     state.mode === "inside"
       ? -Math.PI / state.smallTeeth
       : Math.PI - Math.PI / state.smallTeeth;
-  drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, "#000000", true, phi + meshPhaseOffset);
+  drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, "#2f4858", true, phi + meshPhaseOffset);
 
   drawHoles(sc.x, sc.y, phi);
 }
@@ -625,6 +663,7 @@ canvas.addEventListener("pointerdown", (event) => {
     state.strokes.push(state.activeStroke);
     state.lastPointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
     canvas.setPointerCapture(event.pointerId);
+    updateCanvasCursor();
     pushTracePoint();
     draw();
     return;
@@ -635,16 +674,25 @@ canvas.addEventListener("pointerdown", (event) => {
   state.selectedHole = -1;
   state.activeStroke = null;
   canvas.setPointerCapture(event.pointerId);
+  updateCanvasCursor();
   draw();
 });
 
 canvas.addEventListener("pointermove", (event) => {
-  if (!state.dragging) return;
   const screenPoint = screenToCanvas(event.clientX, event.clientY);
+  const previousScreenX = state.view.lastScreenX;
+  const previousScreenY = state.view.lastScreenY;
+
+  if (!state.dragging) {
+    updateCanvasCursor(event.clientX, event.clientY);
+    state.view.lastScreenX = screenPoint.x;
+    state.view.lastScreenY = screenPoint.y;
+    return;
+  }
 
   if (state.view.dragMode === "pan") {
-    const dx = screenPoint.x - state.view.lastScreenX;
-    const dy = screenPoint.y - state.view.lastScreenY;
+    const dx = screenPoint.x - previousScreenX;
+    const dy = screenPoint.y - previousScreenY;
     state.view.panX += dx;
     state.view.panY += dy;
     state.view.lastScreenX = screenPoint.x;
@@ -670,20 +718,30 @@ function stopDrag(event) {
     state.strokes.pop();
   }
   state.activeStroke = null;
+  state.selectedHole = -1;
   if (event) {
     canvas.releasePointerCapture(event.pointerId);
   }
+  updateCanvasCursor();
+  draw();
 }
 
 canvas.addEventListener("pointerup", stopDrag);
 canvas.addEventListener("pointercancel", stopDrag);
+canvas.addEventListener("pointerenter", (event) => {
+  updateCanvasCursor(event.clientX, event.clientY);
+});
 canvas.addEventListener("pointerleave", () => {
+  if (!state.dragging) {
+    canvas.style.cursor = "grab";
+  }
   if (state.dragging) draw();
 });
 
 canvas.addEventListener("wheel", (event) => {
   cancelViewAnimation();
   event.preventDefault();
+  flashZoomCursor(event.deltaY);
   const zoomFactor = Math.exp(-event.deltaY * 0.0012);
   setZoomAt(event.clientX, event.clientY, state.view.zoom * zoomFactor);
   draw();
@@ -725,6 +783,11 @@ controls.inkColour.addEventListener("input", () => {
   draw();
 });
 
+controls.paperColour.addEventListener("input", () => {
+  state.paperColour = controls.paperColour.value;
+  draw();
+});
+
 controls.strokeWidth.addEventListener("input", () => {
   state.strokeWidth = Number(controls.strokeWidth.value);
   draw();
@@ -749,7 +812,12 @@ controls.resetView.addEventListener("click", () => {
 
 window.addEventListener("resize", () => {
   applyViewportPanelRule();
-  scheduleLayoutGeometrySync();
+  scheduleLayoutGeometrySync({ fitView: true });
+});
+
+window.addEventListener("orientationchange", () => {
+  applyViewportPanelRule();
+  scheduleLayoutGeometrySync({ fitView: true });
 });
 
 panelToggle.addEventListener("click", () => {
@@ -780,12 +848,14 @@ function init() {
   syncWheelOptions();
   state.smallTeeth = Number(controls.smallTeeth.value);
   state.inkColour = controls.inkColour.value;
+  state.paperColour = controls.paperColour.value;
   state.strokeWidth = Number(controls.strokeWidth.value);
 
   applyViewportPanelRule();
   syncLayoutGeometry();
   fitViewToContent();
   draw();
+  updateCanvasCursor();
 }
 
 init();
