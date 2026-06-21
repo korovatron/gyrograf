@@ -56,6 +56,10 @@ const WHEEL_HOLE_MAP = {
   84: 35
 };
 
+const GEAR_FILL_COLOR = "rgba(214, 224, 235, 0.34)";
+const GEAR_STROKE_COLOR = "#7A8898";
+const HOLE_STROKE_COLOR = "#6F7D8D";
+
 const controls = {
   ringPiece: document.getElementById("ringPiece"),
   track: document.getElementById("track"),
@@ -564,7 +568,7 @@ function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false,
   ctx.strokeStyle = colour;
   ctx.lineWidth = 1.6;
   if (fill) {
-    ctx.fillStyle = "rgba(250, 237, 218, 0.92)";
+    ctx.fillStyle = GEAR_FILL_COLOR;
     ctx.fill();
   }
   ctx.stroke();
@@ -598,10 +602,10 @@ function drawRingPiece() {
   ctx.beginPath();
   traceToothTrackPath(state.centre.x, state.centre.y, state.ringOuterRadius, toothDepth, piece.outerTeeth, "out");
   traceToothTrackPath(state.centre.x, state.centre.y, state.ringInnerRadius, toothDepth, piece.innerTeeth, "in");
-  ctx.fillStyle = "rgba(215, 200, 176, 0.98)";
+  ctx.fillStyle = GEAR_FILL_COLOR;
   ctx.fill("evenodd");
 
-  ctx.strokeStyle = "#2f4858";
+  ctx.strokeStyle = GEAR_STROKE_COLOR;
   ctx.lineWidth = 1.6;
   ctx.stroke();
 }
@@ -631,7 +635,7 @@ function drawHoles(cx, cy, phi) {
     const y = cy + Math.sin(phi + hole.a) * hole.r;
     ctx.beginPath();
     ctx.arc(x, y, i === state.selectedHole ? 4.6 : 3.5, 0, Math.PI * 2);
-    ctx.strokeStyle = i === state.selectedHole ? state.inkColour : "#364152";
+    ctx.strokeStyle = i === state.selectedHole ? state.inkColour : HOLE_STROKE_COLOR;
     ctx.lineWidth = i === state.selectedHole ? 1.8 : 1.2;
     ctx.stroke();
     if (i === state.selectedHole) {
@@ -664,7 +668,7 @@ function draw() {
     state.mode === "inside"
       ? -Math.PI / state.smallTeeth
       : Math.PI - Math.PI / state.smallTeeth;
-  if (state.showGear) drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, "#2f4858", true, phi + meshPhaseOffset);
+  if (state.showGear) drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, GEAR_STROKE_COLOR, true, phi + meshPhaseOffset);
 
   if (state.showGear) drawHoles(sc.x, sc.y, phi);
 }
