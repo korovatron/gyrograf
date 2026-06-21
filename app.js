@@ -1,3 +1,17 @@
+// --actual-vh fixes the iOS Safari bug where 100vh includes the browser chrome,
+// causing the layout to overflow. We compute the real viewport height in JS and
+// set it as a CSS custom property, then use var(--actual-vh) in place of 100dvh.
+function setActualVH() {
+  document.documentElement.style.setProperty('--actual-vh', `${window.innerHeight}px`);
+}
+setActualVH();
+window.addEventListener('resize', setActualVH);
+// orientationchange fires before the browser has finished resizing, so we
+// delay slightly to capture the final innerHeight after rotation completes.
+window.addEventListener('orientationchange', () => setTimeout(setActualVH, 100));
+// pageshow covers the iOS back-forward cache restore case.
+window.addEventListener('pageshow', () => setTimeout(setActualVH, 0));
+
 const canvas = document.getElementById("stage");
 const ctx = canvas.getContext("2d");
 const layoutRoot = document.getElementById("layoutRoot");

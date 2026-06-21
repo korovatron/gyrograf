@@ -2,13 +2,15 @@
 <html lang="en-GB">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover is required for iOS safe area env() variables to work -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Gyrograf</title>
     <link rel="icon" type="image/png" sizes="192x192" href="./images/appIcon_192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="./images/appIcon_180.png" />
     <link rel="manifest" href="./manifest.json" />
     <meta name="theme-color" content="#1A2F42" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Gyrograf" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="stylesheet" href="./styles.css" />
@@ -67,5 +69,11 @@
     </main>
 
     <script src="./app.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./service-worker.js', { scope: './' })
+          .catch((err) => console.error('Service Worker registration failed:', err));
+      }
+    </script>
   </body>
 </html>

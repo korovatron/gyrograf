@@ -1,9 +1,12 @@
 {
+  "id": "gyrograf",
   "name": "Gyrograf",
   "short_name": "Gyrograf",
   "description": "Fresh curves, gyros-style",
-  "start_url": "./",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#1A2F42",
   "theme_color": "#1A2F42",
   "icons": [
@@ -11,13 +14,25 @@
       "src": "./images/appIcon_192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./images/appIcon_192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "./images/appIcon_512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./images/appIcon_512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
