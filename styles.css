@@ -40,6 +40,17 @@ body {
   text-size-adjust: 100%;
 }
 
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body,
+  body * {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1fr;
