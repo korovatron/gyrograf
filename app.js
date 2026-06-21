@@ -21,6 +21,27 @@ const TOOTH_STYLE = {
   peakFraction: 0.5
 };
 
+const WHEEL_HOLE_MAP = {
+  24: 5,
+  30: 8,
+  32: 9,
+  36: 11,
+  40: 13,
+  42: 14,
+  45: 16,
+  48: 17,
+  50: 18,
+  52: 19,
+  56: 21,
+  60: 23,
+  63: 25,
+  64: 25,
+  72: 29,
+  75: 31,
+  80: 33,
+  84: 35
+};
+
 const controls = {
   ringPiece: document.getElementById("ringPiece"),
   track: document.getElementById("track"),
@@ -69,6 +90,10 @@ function availableWheels() {
   return PRESETS.wheels.filter((teeth) => (state.mode === "inside" ? teeth < state.bigTeeth : true));
 }
 
+function wheelHoleCount(teeth) {
+  return WHEEL_HOLE_MAP[teeth] || Math.max(5, Math.round(teeth * 0.4));
+}
+
 function syncTrackOptions() {
   const piece = selectedRingPiece();
   controls.track.innerHTML = [
@@ -100,14 +125,15 @@ function syncWheelOptions() {
 
 function rebuildHoles() {
   state.holes = [];
-  const count = Math.max(7, Math.min(15, Math.floor(state.smallTeeth / 6)));
+  const count = wheelHoleCount(state.smallTeeth);
+  const minRadius = 10;
+  const maxRadius = Math.max(minRadius + 8, state.smallRadius - 16);
+  const turns = Math.max(1.2, Math.min(2.6, 1 + count / 24));
   for (let i = 0; i < count; i += 1) {
     const t = i / Math.max(1, count - 1);
-    const r = 12 + t * (state.smallRadius - 20);
-    state.holes.push({ r, a: Math.PI * 0.18 });
-    if (i > 0) {
-      state.holes.push({ r: r * 0.82, a: Math.PI * 1.18 });
-    }
+    const spiralRadius = minRadius + t * (maxRadius - minRadius);
+    const spiralAngle = -Math.PI / 2 + t * turns * Math.PI * 2;
+    state.holes.push({ r: spiralRadius, a: spiralAngle });
   }
 }
 
@@ -116,7 +142,7 @@ function refreshMeta() {
   const ringPitchDiameter = Math.round(state.bigRadius * 2);
   const wheelPitchDiameter = Math.round(state.smallRadius * 2);
   controls.ringMeta.textContent = `Ring ${piece.label} selected, ${state.track} track ${state.bigTeeth} teeth, pitch diameter ${ringPitchDiameter}px`;
-  controls.wheelMeta.textContent = `Wheel: ${state.smallTeeth} teeth, pitch diameter ${wheelPitchDiameter}px`;
+  controls.wheelMeta.textContent = `Wheel: ${state.smallTeeth} teeth, ${wheelHoleCount(state.smallTeeth)} holes, pitch diameter ${wheelPitchDiameter}px`;
 }
 
 function updateGeometryFromTeeth() {
@@ -263,13 +289,13 @@ function smallRotation() {
   return ((R + r) / r) * state.theta;
 }
 
-function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false) {
+function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false, phase = 0) {
   const tipRadius = radius + toothDepth;
   const rootRadius = radius - toothDepth * TOOTH_STYLE.rootFactor;
   const step = (Math.PI * 2) / toothCount;
   ctx.beginPath();
   for (let i = 0; i < toothCount; i += 1) {
-    const a0 = i * step;
+    const a0 = phase + i * step;
     const aPeak = a0 + step * TOOTH_STYLE.peakFraction;
     const a2 = a0 + step;
     if (i === 0) {
@@ -371,9 +397,13 @@ function draw() {
   drawTrace();
 
   const sc = smallCentre();
-  drawCogRing(sc.x, sc.y, state.smallRadius, toothDepth * 0.92, state.smallTeeth, "#f26430", true);
-
   const phi = smallRotation();
+  const meshPhaseOffset =
+    state.mode === "inside"
+      ? -Math.PI / state.smallTeeth
+      : Math.PI - Math.PI / state.smallTeeth;
+  drawCogRing(sc.x, sc.y, state.smallRadius, toothDepth * 0.92, state.smallTeeth, "#000000", true, phi + meshPhaseOffset);
+
   drawHoles(sc.x, sc.y, phi);
 }
 
