@@ -1033,6 +1033,9 @@ function getContentBounds() {
 function fitViewToContent(animate = false) {
   const bounds = getContentBounds();
   const viewport = canvas.parentElement.getBoundingClientRect();
+  const panelBounds = controlPanel.getBoundingClientRect();
+  const occludedLeftWidth = !narrowMedia.matches && state.panelOpen ? panelBounds.width : 0;
+  const availableWidth = Math.max(1, viewport.width - occludedLeftWidth);
   const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
   const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
   const padding = 0.12;
@@ -1041,14 +1044,15 @@ function fitViewToContent(animate = false) {
     Math.max(
       state.view.minZoom,
       Math.min(
-        (viewport.width * (1 - padding)) / contentWidth,
+        (availableWidth * (1 - padding)) / contentWidth,
         (viewport.height * (1 - padding)) / contentHeight
       )
     )
   );
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
-  const targetPanX = -(centerX - state.centre.x) * targetZoom;
+  const visibleCenterOffsetX = occludedLeftWidth * 0.5;
+  const targetPanX = -(centerX - state.centre.x) * targetZoom + visibleCenterOffsetX;
   const targetPanY = -(centerY - state.centre.y) * targetZoom;
 
   if (!animate) {
@@ -1308,9 +1312,7 @@ document.querySelectorAll('input[name="ringPiece"]').forEach((radio) => {
     updateGeometryFromTeeth();
     rebuildHoles();
     refreshMeta();
-    if (!isRackMode()) {
-      fitViewToContent();
-    }
+    fitViewToContent();
     draw();
   });
 });
