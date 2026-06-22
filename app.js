@@ -159,6 +159,7 @@ const state = {
   panelOpen: true,
   userPanelPreference: null,
   narrowPanelPreference: null,
+  rackOrientationLocked: 0,
   view: {
     panX: 0,
     panY: 0,
@@ -390,6 +391,25 @@ function rackLoopLength() {
   const straight = rackStraightLength();
   const radius = rackEndRadius();
   return 2 * straight + 2 * Math.PI * radius;
+}
+
+function rackOrientationAngle() {
+  if (!isRackMode()) return 0;
+  return state.rackOrientationLocked;
+}
+
+function isCanvasBlank() {
+  if (state.strokes.length === 0) return true;
+  for (let s = 0; s < state.strokes.length; s += 1) {
+    const stroke = state.strokes[s];
+    if (stroke?.points?.length) return false;
+  }
+  return true;
+}
+
+function currentPreferredRackOrientation() {
+  if (!narrowMedia.matches) return 0;
+  return window.matchMedia("(orientation: portrait)").matches ? Math.PI / 2 : 0;
 }
 
 function normaliseRackTravel(value) {
@@ -668,54 +688,81 @@ function currentDistance() {
   return state.mode === "inside" ? state.bigRadius - state.smallRadius : state.bigRadius + state.smallRadius;
 }
 
-function rackPathPose() {
+function rotateAround(point, centre, angle) {
+  if (angle === 0) return { x: point.x, y: point.y };
+  const cosA = Math.cos(angle);
+  const sinA = Math.sin(angle);
+  const dx = point.x - centre.x;
+  const dy = point.y - centre.y;
+  return {
+    x: centre.x + dx * cosA - dy * sinA,
+    y: centre.y + dx * sinA + dy * cosA
+  };
+}
+
+function rackPathPoseAt(travel) {
   const straight = rackStraightLength();
   const radius = rackEndRadius();
   const left = state.centre.x - straight / 2;
   const right = state.centre.x + straight / 2;
-  const topY = state.centre.y;
-  const bottomY = topY + 2 * radius;
+  const topY = state.centre.y - radius;
+  const bottomY = state.centre.y + radius;
   const arcLen = Math.PI * radius;
-  const s = normaliseRackTravel(state.theta);
+  const s = normaliseRackTravel(travel);
+
+  let pose;
 
   if (s < straight) {
-    return {
+    pose = {
       x: left + s,
       y: topY,
       tangentAngle: 0,
       progress: s
     };
-  }
-
-  if (s < straight + arcLen) {
+  } else if (s < straight + arcLen) {
     const t = (s - straight) / arcLen;
     const angle = -Math.PI / 2 + t * Math.PI;
-    return {
+    pose = {
       x: right + Math.cos(angle) * radius,
+      y: topY + radius + Math.sin(angle) * radius,
+      tangentAngle: angle + Math.PI / 2,
+      progress: s
+    };
+  } else if (s < 2 * straight + arcLen) {
+    const t = s - (straight + arcLen);
+    pose = {
+      x: right - t,
+      y: bottomY,
+      tangentAngle: Math.PI,
+      progress: s
+    };
+  } else {
+    const t = (s - (2 * straight + arcLen)) / arcLen;
+    const angle = Math.PI / 2 + t * Math.PI;
+    pose = {
+      x: left + Math.cos(angle) * radius,
       y: topY + radius + Math.sin(angle) * radius,
       tangentAngle: angle + Math.PI / 2,
       progress: s
     };
   }
 
-  if (s < 2 * straight + arcLen) {
-    const t = s - (straight + arcLen);
-    return {
-      x: right - t,
-      y: bottomY,
-      tangentAngle: Math.PI,
-      progress: s
-    };
+  const orientation = rackOrientationAngle();
+  if (orientation === 0) {
+    return pose;
   }
 
-  const t = (s - (2 * straight + arcLen)) / arcLen;
-  const angle = Math.PI / 2 + t * Math.PI;
+  const rotatedPoint = rotateAround(pose, state.centre, orientation);
   return {
-    x: left + Math.cos(angle) * radius,
-    y: topY + radius + Math.sin(angle) * radius,
-    tangentAngle: angle + Math.PI / 2,
-    progress: s
+    x: rotatedPoint.x,
+    y: rotatedPoint.y,
+    tangentAngle: pose.tangentAngle + orientation,
+    progress: pose.progress
   };
+}
+
+function rackPathPose() {
+  return rackPathPoseAt(state.theta);
 }
 
 function smallCentre() {
@@ -807,13 +854,21 @@ function traceToothTrackPath(x, y, pitchRadius, toothDepth, toothCount, directio
 function drawRingPiece() {
   const piece = selectedPiece();
   if (piece.kind === "rack") {
+    const orientation = rackOrientationAngle();
+    if (orientation !== 0) {
+      ctx.save();
+      ctx.translate(state.centre.x, state.centre.y);
+      ctx.rotate(orientation);
+      ctx.translate(-state.centre.x, -state.centre.y);
+    }
+
     const toothDepth = currentRingToothDepth();
     const toothRootInset = toothDepth * TOOTH_STYLE.rootFactor;
     const radius = rackEndRadius();
     const left = state.centre.x - rackStraightLength() / 2;
     const right = state.centre.x + rackStraightLength() / 2;
-    const topY = state.centre.y;
-    const bottomY = topY + 2 * radius;
+    const topY = state.centre.y - radius;
+    const bottomY = state.centre.y + radius;
     const arcStep = Math.PI / state.rackEndTeeth;
     const rootRadius = radius - toothRootInset;
     const tipRadius = radius + toothDepth;
@@ -858,6 +913,10 @@ function drawRingPiece() {
     ctx.strokeStyle = GEAR_STROKE_COLOR;
     ctx.lineWidth = 1.6;
     ctx.stroke();
+
+    if (orientation !== 0) {
+      ctx.restore();
+    }
     return;
   }
 
@@ -976,17 +1035,21 @@ function getContentBounds() {
   if (isRackMode()) {
     const ringDepth = currentRingToothDepth();
     const wheelDepth = currentWheelToothDepth();
-    const radius = rackEndRadius();
-    const left = state.centre.x - rackStraightLength() / 2;
-    const right = state.centre.x + rackStraightLength() / 2;
-    const topY = state.centre.y;
-    const bottomY = topY + 2 * radius;
     const wheelRadius = state.smallRadius + wheelDepth;
+    const envelope = ringDepth + wheelRadius;
+    const straight = rackStraightLength();
+    const radius = rackEndRadius();
+    const orientation = rackOrientationAngle();
+    const horizontalHalfWidth = straight * 0.5 + radius;
+    const horizontalHalfHeight = radius;
+    const isVertical = Math.abs(Math.sin(orientation)) > 0.5;
+    const halfWidth = isVertical ? horizontalHalfHeight : horizontalHalfWidth;
+    const halfHeight = isVertical ? horizontalHalfWidth : horizontalHalfHeight;
     const bounds = {
-      minX: left - wheelRadius,
-      minY: topY - ringDepth - wheelRadius,
-      maxX: right + wheelRadius,
-      maxY: bottomY + ringDepth + wheelRadius
+      minX: state.centre.x - halfWidth - envelope,
+      minY: state.centre.y - halfHeight - envelope,
+      maxX: state.centre.x + halfWidth + envelope,
+      maxY: state.centre.y + halfHeight + envelope
     };
 
     for (let s = 0; s < state.strokes.length; s += 1) {
@@ -1305,6 +1368,9 @@ canvas.addEventListener("wheel", (event) => {
 document.querySelectorAll('input[name="ringPiece"]').forEach((radio) => {
   radio.addEventListener("change", () => {
     state.ringPieceId = radio.value;
+    if (isRackMode() && isCanvasBlank()) {
+      state.rackOrientationLocked = currentPreferredRackOrientation();
+    }
     state.theta = 0;
     syncTrackOptions();
     updateGeometryFromTeeth();
