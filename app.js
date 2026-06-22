@@ -159,6 +159,7 @@ const state = {
   inkColour: "#ff0000",
   paperColour: "#ffffff",
   strokeWidth: 2,
+  traceRevision: 0,
   holes: [],
   panelOpen: true,
   userPanelPreference: null,
@@ -181,7 +182,7 @@ let pendingLayoutFrame = 0;
 let cursorResetTimer = 0;
 
 const diagnostics = {
-  enabled: true,
+  enabled: false,
   hudEl: null,
   rafId: 0,
   lastRafTime: 0,
@@ -209,6 +210,16 @@ const viewInteractionCache = {
   valid: false,
   active: false,
   settleTimer: 0
+};
+
+const traceLayer = {
+  canvas: null,
+  ctx: null,
+  widthPx: 0,
+  heightPx: 0,
+  valid: false,
+  revision: -1,
+  viewSignature: ""
 };
 
 function ensureDiagnosticsHud() {
@@ -302,7 +313,16 @@ function renderVectorScene(dpr, viewportOffsetX = 0, viewportOffsetY = 0) {
   ctx.translate(-state.centre.x, -state.centre.y);
 
   if (state.showGear) drawRingPiece();
-  drawTrace();
+  const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
+  if (canUseTraceLayer && ensureTraceLayerReady()) {
+    const { width, height } = canvas.getBoundingClientRect();
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, 0, 0, width, height);
+    ctx.restore();
+  } else {
+    drawTrace();
+  }
 
   const sc = smallCentre();
   const phi = smallRotation();
@@ -435,6 +455,75 @@ function drawViewInteractionCache(width, height) {
     destW || width,
     destH || height
   );
+}
+
+function traceViewSignature() {
+  return [
+    canvas.width,
+    canvas.height,
+    state.centre.x.toFixed(3),
+    state.centre.y.toFixed(3),
+    state.view.zoom.toFixed(6),
+    state.view.panX.toFixed(3),
+    state.view.panY.toFixed(3)
+  ].join("|");
+}
+
+function ensureTraceLayerSurface() {
+  const targetW = canvas.width;
+  const targetH = canvas.height;
+  if (!targetW || !targetH) return null;
+
+  if (!traceLayer.canvas) {
+    traceLayer.canvas = document.createElement("canvas");
+    traceLayer.ctx = traceLayer.canvas.getContext("2d");
+  }
+
+  if (traceLayer.widthPx !== targetW || traceLayer.heightPx !== targetH) {
+    traceLayer.canvas.width = targetW;
+    traceLayer.canvas.height = targetH;
+    traceLayer.widthPx = targetW;
+    traceLayer.heightPx = targetH;
+    traceLayer.valid = false;
+  }
+
+  return traceLayer.ctx;
+}
+
+function rebuildTraceLayer() {
+  const tctx = ensureTraceLayerSurface();
+  if (!tctx) return false;
+
+  const dpr = window.devicePixelRatio || 1;
+  const { width, height } = canvas.getBoundingClientRect();
+  tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  tctx.clearRect(0, 0, width, height);
+  tctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
+  tctx.scale(state.view.zoom, state.view.zoom);
+  tctx.translate(-state.centre.x, -state.centre.y);
+
+  const previousCtx = ctx;
+  ctx = tctx;
+  drawTrace();
+  ctx = previousCtx;
+
+  traceLayer.revision = state.traceRevision;
+  traceLayer.viewSignature = traceViewSignature();
+  traceLayer.valid = true;
+  return true;
+}
+
+function ensureTraceLayerReady() {
+  if (!traceLayer.valid) {
+    return rebuildTraceLayer();
+  }
+  if (traceLayer.revision !== state.traceRevision) {
+    return rebuildTraceLayer();
+  }
+  if (traceLayer.viewSignature !== traceViewSignature()) {
+    return rebuildTraceLayer();
+  }
+  return true;
 }
 
 function syncPenModeControls() {
@@ -897,6 +986,7 @@ function syncLayoutGeometry(options = {}) {
         y: state.centre.y + (point.y - oldCentre.y) * scale
       }))
     }));
+    state.traceRevision += 1;
 
     if (state.activeStroke) {
       state.activeStroke = state.strokes[state.strokes.length - 1] || null;
@@ -1228,6 +1318,7 @@ function drawTrace() {
       ctx.lineWidth = stroke.width;
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
+
       for (let i = 1; i < stroke.points.length; i += 1) {
         const p0 = stroke.points[i - 1];
         const p1 = stroke.points[i];
@@ -1466,6 +1557,7 @@ function pushTracePoint() {
       y: hp.y,
       d: last ? lastDistance + segmentDistance : 0
     });
+    state.traceRevision += 1;
   }
 }
 
@@ -1645,6 +1737,7 @@ function stopDrag(event) {
   state.view.dragMode = null;
   if (state.activeStroke && state.activeStroke.points.length < 2) {
     state.strokes.pop();
+    state.traceRevision += 1;
   }
   state.activeStroke = null;
   state.selectedHole = -1;
@@ -1750,6 +1843,7 @@ controls.strokeWidth.addEventListener("input", () => {
 controls.clearTrace.addEventListener("click", () => {
   state.strokes = [];
   state.activeStroke = null;
+  state.traceRevision += 1;
   draw();
 });
 
