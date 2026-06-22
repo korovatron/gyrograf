@@ -749,6 +749,15 @@ function smallRotation() {
   return ((R + r) / r) * state.theta;
 }
 
+function rackMeshPhaseOffset() {
+  const toothCount = Math.max(1, state.smallTeeth);
+  const step = (Math.PI * 2) / toothCount;
+  const contactAngle = Math.PI / 2;
+  const peakFraction = TOOTH_STYLE.peakFraction;
+  const peakIndex = Math.round(contactAngle / step - peakFraction);
+  return contactAngle - (peakIndex + peakFraction) * step;
+}
+
 function drawCogRing(x, y, radius, toothDepth, toothCount, colour, fill = false, phase = 0) {
   const tipRadius = radius + toothDepth;
   const rootRadius = radius - toothDepth * TOOTH_STYLE.rootFactor;
@@ -925,7 +934,7 @@ function draw(fillBackground = true) {
   const phi = smallRotation();
   let meshPhaseOffset;
   if (isRackMode()) {
-    meshPhaseOffset = -Math.PI / (2 * state.smallTeeth);
+    meshPhaseOffset = rackMeshPhaseOffset();
   } else if (state.mode === "inside") {
     meshPhaseOffset = -Math.PI / state.smallTeeth;
   } else {
