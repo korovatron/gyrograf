@@ -1832,6 +1832,7 @@ document.querySelectorAll('input[name="penType"]').forEach((radio) => {
 
 controls.paperColour.addEventListener("input", () => {
   state.paperColour = controls.paperColour.value;
+  localStorage.setItem('paperColour', state.paperColour);
   draw();
 });
 
@@ -1985,7 +1986,13 @@ function init() {
   state.smallTeeth = Number(controls.smallTeeth.value);
   state.penMode = selectedPenMode();
   state.inkColour = controls.inkColour.value;
-  state.paperColour = controls.paperColour.value;
+  const savedPaperColour = localStorage.getItem('paperColour');
+  if (savedPaperColour) {
+    state.paperColour = savedPaperColour;
+    controls.paperColour.value = savedPaperColour;
+  } else {
+    state.paperColour = controls.paperColour.value;
+  }
   state.strokeWidth = Number(controls.strokeWidth.value);
   syncPenModeControls();
   syncGearToggleButton();
