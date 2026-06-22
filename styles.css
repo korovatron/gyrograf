@@ -345,6 +345,24 @@ canvas {
   touch-action: none;
 }
 
+.perf-hud {
+  position: fixed;
+  right: 10px;
+  top: 10px;
+  z-index: 100;
+  pointer-events: none;
+  white-space: pre;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #e8f4fd;
+  background: rgba(10, 22, 34, 0.8);
+  border: 1px solid rgba(232, 244, 253, 0.28);
+  border-radius: 8px;
+  padding: 8px 10px;
+  backdrop-filter: blur(2px);
+}
+
 .help-close-btn {
   width: 20px;
   height: 20px;

@@ -13,7 +13,8 @@ window.addEventListener('orientationchange', () => setTimeout(setActualVH, 100))
 window.addEventListener('pageshow', () => setTimeout(setActualVH, 0));
 
 const canvas = document.getElementById("stage");
-const ctx = canvas.getContext("2d");
+const mainCtx = canvas.getContext("2d");
+let ctx = mainCtx;
 const layoutRoot = document.getElementById("layoutRoot");
 const controlPanel = document.getElementById("controlPanel");
 const panelTab = document.getElementById("panelTab");
@@ -178,6 +179,263 @@ const state = {
 
 let pendingLayoutFrame = 0;
 let cursorResetTimer = 0;
+
+const diagnostics = {
+  enabled: true,
+  hudEl: null,
+  rafId: 0,
+  lastRafTime: 0,
+  smoothDisplayFps: 0,
+  renderMs: 0,
+  statsNextAt: 0,
+  statsEveryMs: 250,
+  strokeCount: 0,
+  pointCount: 0
+};
+
+const viewInteractionCache = {
+  canvas: null,
+  ctx: null,
+  overscanFactor: 1.8,
+  widthPx: 0,
+  heightPx: 0,
+  snapshotWidth: 0,
+  snapshotHeight: 0,
+  snapshotOffsetX: 0,
+  snapshotOffsetY: 0,
+  snapshotZoom: 1,
+  snapshotPanX: 0,
+  snapshotPanY: 0,
+  valid: false,
+  active: false,
+  settleTimer: 0
+};
+
+function ensureDiagnosticsHud() {
+  if (diagnostics.hudEl) return diagnostics.hudEl;
+  const el = document.createElement("div");
+  el.className = "perf-hud";
+  el.setAttribute("aria-hidden", "true");
+  document.body.appendChild(el);
+  diagnostics.hudEl = el;
+  return el;
+}
+
+function recalcTraceStats() {
+  diagnostics.strokeCount = state.strokes.length;
+  let points = 0;
+  for (let s = 0; s < state.strokes.length; s += 1) {
+    points += state.strokes[s].points?.length || 0;
+  }
+  diagnostics.pointCount = points;
+}
+
+function refreshDiagnosticsHud(now) {
+  if (!diagnostics.enabled) return;
+  const hud = ensureDiagnosticsHud();
+  hud.style.display = "block";
+
+  if (now >= diagnostics.statsNextAt) {
+    recalcTraceStats();
+    diagnostics.statsNextAt = now + diagnostics.statsEveryMs;
+  }
+
+  const dpr = window.devicePixelRatio || 1;
+  const modeLabel = isRackMode() ? "rack" : `${state.track}-${state.mode}`;
+  const fpsText = diagnostics.smoothDisplayFps > 0 ? diagnostics.smoothDisplayFps.toFixed(1) : "-";
+  hud.textContent = [
+    `FPS ${fpsText}`,
+    `frame ${diagnostics.renderMs.toFixed(2)} ms`,
+    `strokes ${diagnostics.strokeCount} | points ${diagnostics.pointCount}`,
+    `mode ${modeLabel} | pen ${state.penMode}`,
+    `zoom ${state.view.zoom.toFixed(2)} | dpr ${dpr.toFixed(2)}`,
+    `drag ${state.view.dragMode || "none"}`,
+    `toggle Shift+D`
+  ].join("\n");
+}
+
+function diagnosticsTick(now) {
+  if (!diagnostics.enabled) {
+    diagnostics.rafId = 0;
+    diagnostics.lastRafTime = 0;
+    return;
+  }
+
+  if (diagnostics.lastRafTime > 0) {
+    const dt = now - diagnostics.lastRafTime;
+    if (dt > 0) {
+      const instantFps = 1000 / dt;
+      diagnostics.smoothDisplayFps = diagnostics.smoothDisplayFps > 0
+        ? diagnostics.smoothDisplayFps * 0.9 + instantFps * 0.1
+        : instantFps;
+    }
+  }
+  diagnostics.lastRafTime = now;
+  refreshDiagnosticsHud(now);
+  diagnostics.rafId = requestAnimationFrame(diagnosticsTick);
+}
+
+function startDiagnosticsLoop() {
+  if (!diagnostics.enabled || diagnostics.rafId) return;
+  diagnostics.rafId = requestAnimationFrame(diagnosticsTick);
+}
+
+function stopDiagnosticsLoop() {
+  if (diagnostics.rafId) {
+    cancelAnimationFrame(diagnostics.rafId);
+    diagnostics.rafId = 0;
+  }
+  diagnostics.lastRafTime = 0;
+  diagnostics.smoothDisplayFps = 0;
+  if (diagnostics.hudEl) {
+    diagnostics.hudEl.style.display = "none";
+  }
+}
+
+function renderVectorScene(dpr, viewportOffsetX = 0, viewportOffsetY = 0) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.translate(
+    state.centre.x + state.view.panX + viewportOffsetX,
+    state.centre.y + state.view.panY + viewportOffsetY
+  );
+  ctx.scale(state.view.zoom, state.view.zoom);
+  ctx.translate(-state.centre.x, -state.centre.y);
+
+  if (state.showGear) drawRingPiece();
+  drawTrace();
+
+  const sc = smallCentre();
+  const phi = smallRotation();
+  let meshPhaseOffset;
+  if (isRackMode()) {
+    meshPhaseOffset = rackMeshPhaseOffset();
+  } else if (state.mode === "inside") {
+    meshPhaseOffset = -Math.PI / state.smallTeeth;
+  } else {
+    meshPhaseOffset = Math.PI - Math.PI / state.smallTeeth;
+  }
+  if (state.showGear) {
+    drawCogRing(
+      sc.x,
+      sc.y,
+      state.smallRadius,
+      currentWheelToothDepth(),
+      state.smallTeeth,
+      GEAR_STROKE_COLOR,
+      true,
+      phi + meshPhaseOffset
+    );
+  }
+  if (state.showGear) drawHoles(sc.x, sc.y, phi);
+}
+
+function ensureViewInteractionCacheSurface(targetW, targetH) {
+  if (!targetW || !targetH) return null;
+
+  if (!viewInteractionCache.canvas) {
+    viewInteractionCache.canvas = document.createElement("canvas");
+    viewInteractionCache.ctx = viewInteractionCache.canvas.getContext("2d");
+  }
+
+  if (viewInteractionCache.widthPx !== targetW || viewInteractionCache.heightPx !== targetH) {
+    viewInteractionCache.canvas.width = targetW;
+    viewInteractionCache.canvas.height = targetH;
+    viewInteractionCache.widthPx = targetW;
+    viewInteractionCache.heightPx = targetH;
+    viewInteractionCache.valid = false;
+  }
+
+  return viewInteractionCache.ctx;
+}
+
+function captureViewInteractionSnapshot() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const overscan = viewInteractionCache.overscanFactor;
+  const cacheCssW = rect.width * overscan;
+  const cacheCssH = rect.height * overscan;
+  const targetW = Math.max(1, Math.floor(cacheCssW * dpr));
+  const targetH = Math.max(1, Math.floor(cacheCssH * dpr));
+
+  const cacheCtx = ensureViewInteractionCacheSurface(targetW, targetH);
+  if (!cacheCtx) return;
+
+  const marginX = (cacheCssW - rect.width) * 0.5;
+  const marginY = (cacheCssH - rect.height) * 0.5;
+
+  const previousCtx = ctx;
+  ctx = cacheCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cacheCssW, cacheCssH);
+  ctx.fillStyle = state.paperColour;
+  ctx.fillRect(0, 0, cacheCssW, cacheCssH);
+  renderVectorScene(dpr, marginX, marginY);
+  ctx = previousCtx;
+
+  viewInteractionCache.snapshotWidth = cacheCssW;
+  viewInteractionCache.snapshotHeight = cacheCssH;
+  viewInteractionCache.snapshotOffsetX = marginX;
+  viewInteractionCache.snapshotOffsetY = marginY;
+  viewInteractionCache.snapshotZoom = state.view.zoom;
+  viewInteractionCache.snapshotPanX = state.view.panX;
+  viewInteractionCache.snapshotPanY = state.view.panY;
+  viewInteractionCache.valid = true;
+}
+
+function beginViewInteraction() {
+  if (viewInteractionCache.settleTimer) {
+    clearTimeout(viewInteractionCache.settleTimer);
+    viewInteractionCache.settleTimer = 0;
+  }
+  if (!viewInteractionCache.active) {
+    captureViewInteractionSnapshot();
+    viewInteractionCache.active = true;
+  }
+}
+
+function settleViewInteraction(delayMs = 120) {
+  if (viewInteractionCache.settleTimer) {
+    clearTimeout(viewInteractionCache.settleTimer);
+  }
+  viewInteractionCache.settleTimer = setTimeout(() => {
+    viewInteractionCache.settleTimer = 0;
+    viewInteractionCache.active = false;
+    viewInteractionCache.valid = false;
+    draw();
+  }, delayMs);
+}
+
+function canUseViewInteractionCache(fillBackground) {
+  return fillBackground && viewInteractionCache.active && viewInteractionCache.valid;
+}
+
+function drawViewInteractionCache(width, height) {
+  if (!viewInteractionCache.valid || !viewInteractionCache.canvas) return;
+  const snapshotZoom = viewInteractionCache.snapshotZoom || 1;
+  const scale = state.view.zoom / snapshotZoom;
+  const tx =
+    state.centre.x +
+    state.view.panX -
+    scale * (state.centre.x + viewInteractionCache.snapshotPanX + viewInteractionCache.snapshotOffsetX);
+  const ty =
+    state.centre.y +
+    state.view.panY -
+    scale * (state.centre.y + viewInteractionCache.snapshotPanY + viewInteractionCache.snapshotOffsetY);
+  const destW = viewInteractionCache.snapshotWidth * scale;
+  const destH = viewInteractionCache.snapshotHeight * scale;
+
+  ctx.drawImage(
+    viewInteractionCache.canvas,
+    0,
+    0,
+    viewInteractionCache.widthPx,
+    viewInteractionCache.heightPx,
+    tx,
+    ty,
+    destW || width,
+    destH || height
+  );
+}
 
 function syncPenModeControls() {
   const solidMode = state.penMode === "solid";
@@ -1022,6 +1280,7 @@ function drawHoles(cx, cy, phi) {
 }
 
 function draw(fillBackground = true) {
+  const frameStart = performance.now();
   const { width, height } = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1030,26 +1289,18 @@ function draw(fillBackground = true) {
     ctx.fillStyle = state.paperColour;
     ctx.fillRect(0, 0, width, height);
   }
-  applyViewportTransform();
 
-  const toothDepth = currentRingToothDepth();
-  if (state.showGear) drawRingPiece();
-
-  drawTrace();
-
-  const sc = smallCentre();
-  const phi = smallRotation();
-  let meshPhaseOffset;
-  if (isRackMode()) {
-    meshPhaseOffset = rackMeshPhaseOffset();
-  } else if (state.mode === "inside") {
-    meshPhaseOffset = -Math.PI / state.smallTeeth;
-  } else {
-    meshPhaseOffset = Math.PI - Math.PI / state.smallTeeth;
+  if (canUseViewInteractionCache(fillBackground)) {
+    drawViewInteractionCache(width, height);
+    const frameEndFast = performance.now();
+    diagnostics.renderMs = frameEndFast - frameStart;
+    return;
   }
-  if (state.showGear) drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, GEAR_STROKE_COLOR, true, phi + meshPhaseOffset);
 
-  if (state.showGear) drawHoles(sc.x, sc.y, phi);
+  renderVectorScene(dpr, 0, 0);
+
+  const frameEnd = performance.now();
+  diagnostics.renderMs = frameEnd - frameStart;
 }
 
 function angleDiff(a, b) {
@@ -1266,6 +1517,7 @@ canvas.addEventListener("pointerdown", (event) => {
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
   if (activePointers.size === 2) {
+    beginViewInteraction();
     // Second finger down - cancel any active draw/drag and enter pinch mode
     cancelViewAnimation();
     if (state.activeStroke && state.activeStroke.points.length < 2) {
@@ -1309,6 +1561,7 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  beginViewInteraction();
   state.dragging = true;
   state.view.dragMode = "pan";
   state.selectedHole = -1;
@@ -1378,6 +1631,7 @@ function stopDrag(event) {
     if (activePointers.size < 2) {
       state.view.dragMode = null;
       pinchLastDist = 0;
+      settleViewInteraction(80);
     } else {
       pinchLastDist = getPinchInfo().dist;
     }
@@ -1386,6 +1640,7 @@ function stopDrag(event) {
   }
 
   if (!state.dragging) return;
+  const previousDragMode = state.view.dragMode;
   state.dragging = false;
   state.view.dragMode = null;
   if (state.activeStroke && state.activeStroke.points.length < 2) {
@@ -1393,6 +1648,9 @@ function stopDrag(event) {
   }
   state.activeStroke = null;
   state.selectedHole = -1;
+  if (previousDragMode === "pan") {
+    settleViewInteraction(80);
+  }
   if (event) {
     canvas.releasePointerCapture(event.pointerId);
   }
@@ -1413,12 +1671,14 @@ canvas.addEventListener("pointerleave", () => {
 });
 
 canvas.addEventListener("wheel", (event) => {
+  beginViewInteraction();
   cancelViewAnimation();
   event.preventDefault();
   flashZoomCursor(event.deltaY);
   const zoomFactor = Math.exp(-event.deltaY * 0.0012);
   setZoomAt(event.clientX, event.clientY, state.view.zoom * zoomFactor);
   draw();
+  settleViewInteraction(150);
 }, { passive: false });
 
 // Ring piece radio buttons
@@ -1556,6 +1816,19 @@ controls.doExportBtn.addEventListener("click", () => {
 syncExportActionLabels();
 
 document.addEventListener("keydown", (event) => {
+  if (event.shiftKey && event.key.toLowerCase() === "d") {
+    diagnostics.enabled = !diagnostics.enabled;
+    if (diagnostics.enabled) {
+      diagnostics.lastRafTime = 0;
+      diagnostics.smoothDisplayFps = 0;
+      startDiagnosticsLoop();
+      draw();
+    } else {
+      stopDiagnosticsLoop();
+    }
+    return;
+  }
+
   if (event.key !== "Escape") return;
 
   if (controls.helpOverlay.classList.contains("show")) {
@@ -1622,6 +1895,10 @@ function init() {
   state.strokeWidth = Number(controls.strokeWidth.value);
   syncPenModeControls();
   syncGearToggleButton();
+
+  if (diagnostics.enabled) {
+    startDiagnosticsLoop();
+  }
 
   applyViewportPanelRule();
   syncLayoutGeometry();
