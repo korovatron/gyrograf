@@ -190,6 +190,14 @@ select {
   margin: 0 0 0.8rem 0;
 }
 
+.radio-group.is-disabled {
+  opacity: 0.58;
+}
+
+.radio-group.is-disabled .radio-options label {
+  cursor: not-allowed;
+}
+
 .radio-group legend {
   display: block;
   font-size: 0.78rem;

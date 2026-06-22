@@ -20,9 +20,10 @@ const panelTab = document.getElementById("panelTab");
 const narrowMedia = window.matchMedia("(max-width: 980px)");
 
 const PRESETS = {
-  ringPieces: [
-    { id: "r150_105", label: "150/105", outerTeeth: 150, innerTeeth: 105 },
-    { id: "r144_96", label: "144/96", outerTeeth: 144, innerTeeth: 96 }
+  pieces: [
+    { id: "r150_105", label: "Ring 150/105", kind: "ring", outerTeeth: 150, innerTeeth: 105 },
+    { id: "r144_96", label: "Ring 144/96", kind: "ring", outerTeeth: 144, innerTeeth: 96 },
+    { id: "rack96", label: "Obround rack 96/96", kind: "rack", teeth: 96 }
   ],
   wheels: [24, 30, 32, 36, 40, 42, 45, 48, 50, 52, 56, 60, 63, 64, 72, 75, 80, 84]
 };
@@ -78,6 +79,7 @@ const controls = {
   aboutOverlay: document.getElementById("aboutOverlay"),
   closeAboutBtn: document.getElementById("closeAboutBtn"),
   trackOptions: document.getElementById("trackOptions"),
+  trackFieldset: document.getElementById("trackFieldset"),
   exportOverlay: document.getElementById("exportOverlay"),
   closeExportBtn: document.getElementById("closeExportBtn"),
   exportIncludeGear: document.getElementById("exportIncludeGear"),
@@ -137,6 +139,7 @@ const state = {
   dragging: false,
   showGear: true,
   lastPointerAngle: 0,
+  lastPointerWorld: { x: 0, y: 0 },
   mode: "inside",
   track: "inner",
   ringPieceId: "r150_105",
@@ -146,6 +149,8 @@ const state = {
   smallRadius: 90,
   ringOuterRadius: 230,
   ringInnerRadius: 160,
+  rackLength: 420,
+  rackEndTeeth: 24,
   toothPitch: 1,
   inkColour: "#ff0000",
   paperColour: "#ffffff",
@@ -158,7 +163,7 @@ const state = {
     panX: 0,
     panY: 0,
     zoom: 1,
-    minZoom: 0.55,
+    minZoom: 0.18,
     maxZoom: 2.8,
     dragMode: null,
     lastScreenX: 0,
@@ -344,11 +349,18 @@ function syncGearToggleButton() {
   controls.toggleGear.classList.toggle("is-off", !state.showGear);
 }
 
-function selectedRingPiece() {
-  return PRESETS.ringPieces.find((piece) => piece.id === state.ringPieceId) || PRESETS.ringPieces[0];
+function selectedPiece() {
+  return PRESETS.pieces.find((piece) => piece.id === state.ringPieceId) || PRESETS.pieces[0];
+}
+
+function isRackMode() {
+  return selectedPiece().kind === "rack";
 }
 
 function availableWheels() {
+  if (isRackMode()) {
+    return PRESETS.wheels.filter((teeth) => teeth < state.bigTeeth);
+  }
   return PRESETS.wheels.filter((teeth) => (state.mode === "inside" ? teeth < state.bigTeeth : true));
 }
 
@@ -364,8 +376,40 @@ function currentWheelToothDepth() {
   return currentRingToothDepth() * 0.92;
 }
 
+function rackStraightLength() {
+  const piece = selectedPiece();
+  if (piece.kind !== "rack") return 0;
+  return piece.teeth * state.toothPitch;
+}
+
+function rackEndRadius() {
+  return (state.rackEndTeeth * state.toothPitch) / Math.PI;
+}
+
+function rackLoopLength() {
+  const straight = rackStraightLength();
+  const radius = rackEndRadius();
+  return 2 * straight + 2 * Math.PI * radius;
+}
+
+function normaliseRackTravel(value) {
+  const length = rackLoopLength();
+  if (length <= 0) return 0;
+  return ((value % length) + length) % length;
+}
+
 function syncTrackOptions() {
-  const piece = selectedRingPiece();
+  const piece = selectedPiece();
+
+  if (piece.kind === "rack") {
+    state.track = "outer";
+    state.mode = "outside";
+    controls.trackOptions.innerHTML = "<label><input type=\"radio\" name=\"track\" value=\"outer\" checked disabled /> Outside (rack only)</label>";
+    controls.trackFieldset?.classList.add("is-disabled");
+    return;
+  }
+
+  controls.trackFieldset?.classList.remove("is-disabled");
   controls.trackOptions.innerHTML = [
     { value: "inner", label: `Inner (${piece.innerTeeth} teeth)` },
     { value: "outer", label: `Outer (${piece.outerTeeth} teeth)` }
@@ -416,10 +460,21 @@ function refreshMeta() {
 }
 
 function updateGeometryFromTeeth() {
-  const piece = selectedRingPiece();
+  const piece = selectedPiece();
   const bounds = canvas.getBoundingClientRect();
   const maxFitRadius = Math.max(60, Math.min(bounds.width, bounds.height) * 0.5 - 24);
   const fitOuterRadius = Math.min(300, maxFitRadius);
+
+  if (piece.kind === "rack") {
+    state.toothPitch = (Math.PI * 2 * fitOuterRadius) / piece.teeth;
+    state.rackLength = rackStraightLength() + 2 * rackEndRadius();
+    state.mode = "outside";
+    state.bigTeeth = piece.teeth;
+    state.bigRadius = 0;
+    state.smallRadius = (state.toothPitch * state.smallTeeth) / (Math.PI * 2);
+    return;
+  }
+
   state.ringOuterRadius = fitOuterRadius;
   state.toothPitch = (Math.PI * 2 * fitOuterRadius) / piece.outerTeeth;
   state.ringInnerRadius = (state.toothPitch * piece.innerTeeth) / (Math.PI * 2);
@@ -613,7 +668,66 @@ function currentDistance() {
   return state.mode === "inside" ? state.bigRadius - state.smallRadius : state.bigRadius + state.smallRadius;
 }
 
+function rackPathPose() {
+  const straight = rackStraightLength();
+  const radius = rackEndRadius();
+  const left = state.centre.x - straight / 2;
+  const right = state.centre.x + straight / 2;
+  const topY = state.centre.y;
+  const bottomY = topY + 2 * radius;
+  const arcLen = Math.PI * radius;
+  const s = normaliseRackTravel(state.theta);
+
+  if (s < straight) {
+    return {
+      x: left + s,
+      y: topY,
+      tangentAngle: 0,
+      progress: s
+    };
+  }
+
+  if (s < straight + arcLen) {
+    const t = (s - straight) / arcLen;
+    const angle = -Math.PI / 2 + t * Math.PI;
+    return {
+      x: right + Math.cos(angle) * radius,
+      y: topY + radius + Math.sin(angle) * radius,
+      tangentAngle: angle + Math.PI / 2,
+      progress: s
+    };
+  }
+
+  if (s < 2 * straight + arcLen) {
+    const t = s - (straight + arcLen);
+    return {
+      x: right - t,
+      y: bottomY,
+      tangentAngle: Math.PI,
+      progress: s
+    };
+  }
+
+  const t = (s - (2 * straight + arcLen)) / arcLen;
+  const angle = Math.PI / 2 + t * Math.PI;
+  return {
+    x: left + Math.cos(angle) * radius,
+    y: topY + radius + Math.sin(angle) * radius,
+    tangentAngle: angle + Math.PI / 2,
+    progress: s
+  };
+}
+
 function smallCentre() {
+  if (isRackMode()) {
+    const pose = rackPathPose();
+    const normalAngle = pose.tangentAngle - Math.PI / 2;
+    return {
+      x: pose.x + Math.cos(normalAngle) * state.smallRadius,
+      y: pose.y + Math.sin(normalAngle) * state.smallRadius
+    };
+  }
+
   const d = currentDistance();
   return {
     x: state.centre.x + Math.cos(state.theta) * d,
@@ -622,6 +736,11 @@ function smallCentre() {
 }
 
 function smallRotation() {
+  if (isRackMode()) {
+    const pose = rackPathPose();
+    return state.theta / state.smallRadius + pose.tangentAngle;
+  }
+
   const R = state.bigRadius;
   const r = state.smallRadius;
   if (state.mode === "inside") {
@@ -677,8 +796,63 @@ function traceToothTrackPath(x, y, pitchRadius, toothDepth, toothCount, directio
 }
 
 function drawRingPiece() {
+  const piece = selectedPiece();
+  if (piece.kind === "rack") {
+    const toothDepth = currentRingToothDepth();
+    const toothRootInset = toothDepth * TOOTH_STYLE.rootFactor;
+    const radius = rackEndRadius();
+    const left = state.centre.x - rackStraightLength() / 2;
+    const right = state.centre.x + rackStraightLength() / 2;
+    const topY = state.centre.y;
+    const bottomY = topY + 2 * radius;
+    const arcStep = Math.PI / state.rackEndTeeth;
+    const rootRadius = radius - toothRootInset;
+    const tipRadius = radius + toothDepth;
+
+    ctx.beginPath();
+    ctx.moveTo(left, topY + toothRootInset);
+    for (let i = 0; i < piece.teeth; i += 1) {
+      const x0 = left + i * state.toothPitch;
+      const xPeak = x0 + state.toothPitch * TOOTH_STYLE.peakFraction;
+      const x1 = x0 + state.toothPitch;
+      ctx.lineTo(xPeak, topY - toothDepth);
+      ctx.lineTo(x1, topY + toothRootInset);
+    }
+
+    for (let i = 0; i < state.rackEndTeeth; i += 1) {
+      const a0 = -Math.PI / 2 + i * arcStep;
+      const aPeak = a0 + arcStep * TOOTH_STYLE.peakFraction;
+      const a1 = a0 + arcStep;
+      ctx.lineTo(right + Math.cos(aPeak) * tipRadius, topY + radius + Math.sin(aPeak) * tipRadius);
+      ctx.lineTo(right + Math.cos(a1) * rootRadius, topY + radius + Math.sin(a1) * rootRadius);
+    }
+
+    for (let i = 0; i < piece.teeth; i += 1) {
+      const x0 = right - i * state.toothPitch;
+      const xPeak = x0 - state.toothPitch * TOOTH_STYLE.peakFraction;
+      const x1 = x0 - state.toothPitch;
+      ctx.lineTo(xPeak, bottomY + toothDepth);
+      ctx.lineTo(x1, bottomY - toothRootInset);
+    }
+
+    for (let i = 0; i < state.rackEndTeeth; i += 1) {
+      const a0 = Math.PI / 2 + i * arcStep;
+      const aPeak = a0 + arcStep * TOOTH_STYLE.peakFraction;
+      const a1 = a0 + arcStep;
+      ctx.lineTo(left + Math.cos(aPeak) * tipRadius, topY + radius + Math.sin(aPeak) * tipRadius);
+      ctx.lineTo(left + Math.cos(a1) * rootRadius, topY + radius + Math.sin(a1) * rootRadius);
+    }
+
+    ctx.closePath();
+    ctx.fillStyle = GEAR_FILL_COLOR;
+    ctx.fill();
+    ctx.strokeStyle = GEAR_STROKE_COLOR;
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    return;
+  }
+
   const toothDepth = currentRingToothDepth();
-  const piece = selectedRingPiece();
 
   ctx.beginPath();
   traceToothTrackPath(state.centre.x, state.centre.y, state.ringOuterRadius, toothDepth, piece.outerTeeth, "out");
@@ -749,10 +923,14 @@ function draw(fillBackground = true) {
 
   const sc = smallCentre();
   const phi = smallRotation();
-  const meshPhaseOffset =
-    state.mode === "inside"
-      ? -Math.PI / state.smallTeeth
-      : Math.PI - Math.PI / state.smallTeeth;
+  let meshPhaseOffset;
+  if (isRackMode()) {
+    meshPhaseOffset = -Math.PI / (2 * state.smallTeeth);
+  } else if (state.mode === "inside") {
+    meshPhaseOffset = -Math.PI / state.smallTeeth;
+  } else {
+    meshPhaseOffset = Math.PI - Math.PI / state.smallTeeth;
+  }
   if (state.showGear) drawCogRing(sc.x, sc.y, state.smallRadius, currentWheelToothDepth(), state.smallTeeth, GEAR_STROKE_COLOR, true, phi + meshPhaseOffset);
 
   if (state.showGear) drawHoles(sc.x, sc.y, phi);
@@ -786,6 +964,36 @@ function nearestHole(point) {
 }
 
 function getContentBounds() {
+  if (isRackMode()) {
+    const ringDepth = currentRingToothDepth();
+    const wheelDepth = currentWheelToothDepth();
+    const radius = rackEndRadius();
+    const left = state.centre.x - rackStraightLength() / 2;
+    const right = state.centre.x + rackStraightLength() / 2;
+    const topY = state.centre.y;
+    const bottomY = topY + 2 * radius;
+    const wheelRadius = state.smallRadius + wheelDepth;
+    const bounds = {
+      minX: left - wheelRadius,
+      minY: topY - ringDepth - wheelRadius,
+      maxX: right + wheelRadius,
+      maxY: bottomY + ringDepth + wheelRadius
+    };
+
+    for (let s = 0; s < state.strokes.length; s += 1) {
+      const stroke = state.strokes[s];
+      for (let i = 0; i < stroke.points.length; i += 1) {
+        const point = stroke.points[i];
+        if (point.x < bounds.minX) bounds.minX = point.x;
+        if (point.y < bounds.minY) bounds.minY = point.y;
+        if (point.x > bounds.maxX) bounds.maxX = point.x;
+        if (point.y > bounds.maxY) bounds.maxY = point.y;
+      }
+    }
+
+    return bounds;
+  }
+
   const ringDepth = currentRingToothDepth();
   const wheelDepth = currentWheelToothDepth();
   const ringRadius = state.ringOuterRadius + ringDepth;
@@ -884,12 +1092,29 @@ function pushInterpolatedTrace(deltaTheta) {
   if (state.selectedHole < 0) return;
 
   const maxStep = 0.012;
-  const steps = Math.max(1, Math.ceil(Math.abs(deltaTheta) / maxStep));
+  const stepMagnitude = isRackMode() ? Math.max(0.65, state.toothPitch * 0.22) : maxStep;
+  const steps = Math.max(1, Math.ceil(Math.abs(deltaTheta) / stepMagnitude));
   const startTheta = state.theta;
 
   for (let i = 1; i <= steps; i += 1) {
-    state.theta = startTheta + (deltaTheta * i) / steps;
+    const nextTheta = startTheta + (deltaTheta * i) / steps;
+    state.theta = nextTheta;
     pushTracePoint();
+  }
+}
+
+function rackPointerDelta(previousPoint, currentPoint) {
+  const pose = rackPathPose();
+  const tx = Math.cos(pose.tangentAngle);
+  const ty = Math.sin(pose.tangentAngle);
+  const dx = currentPoint.x - previousPoint.x;
+  const dy = currentPoint.y - previousPoint.y;
+  return dx * tx + dy * ty;
+}
+
+function fitAfterControlChange() {
+  if (!isRackMode()) {
+    fitViewToContent();
   }
 }
 
@@ -943,6 +1168,7 @@ canvas.addEventListener("pointerdown", (event) => {
     };
     state.strokes.push(state.activeStroke);
     state.lastPointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
+    state.lastPointerWorld = worldPoint;
     canvas.setPointerCapture(event.pointerId);
     updateCanvasCursor();
     pushTracePoint();
@@ -998,9 +1224,15 @@ canvas.addEventListener("pointermove", (event) => {
   }
 
   const worldPoint = screenToWorld(event.clientX, event.clientY);
-  const pointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
-  const delta = angleDiff(pointerAngle, state.lastPointerAngle);
-  state.lastPointerAngle = pointerAngle;
+  let delta;
+  if (isRackMode()) {
+    delta = rackPointerDelta(state.lastPointerWorld, worldPoint);
+    state.lastPointerWorld = worldPoint;
+  } else {
+    const pointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
+    delta = angleDiff(pointerAngle, state.lastPointerAngle);
+    state.lastPointerAngle = pointerAngle;
+  }
 
   pushInterpolatedTrace(delta);
   draw();
@@ -1060,13 +1292,16 @@ canvas.addEventListener("wheel", (event) => {
 document.querySelectorAll('input[name="ringPiece"]').forEach((radio) => {
   radio.addEventListener("change", () => {
     state.ringPieceId = radio.value;
+    state.theta = 0;
     syncTrackOptions();
     updateGeometryFromTeeth();
     syncWheelOptions();
     updateGeometryFromTeeth();
     rebuildHoles();
     refreshMeta();
-    fitViewToContent();
+    if (!isRackMode()) {
+      fitViewToContent();
+    }
     draw();
   });
 });
@@ -1080,7 +1315,7 @@ function attachTrackListener() {
       updateGeometryFromTeeth();
       rebuildHoles();
       refreshMeta();
-      fitViewToContent();
+      fitAfterControlChange();
       draw();
     });
   });
@@ -1091,7 +1326,7 @@ controls.smallTeeth.addEventListener("change", () => {
   updateGeometryFromTeeth();
   rebuildHoles();
   refreshMeta();
-  fitViewToContent();
+  fitAfterControlChange();
   draw();
 });
 
