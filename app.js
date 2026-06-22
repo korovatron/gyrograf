@@ -19,6 +19,17 @@ window.addEventListener('pageshow', () => {
 const canvas = document.getElementById("stage");
 const mainCtx = canvas.getContext("2d");
 let ctx = mainCtx;
+
+function getCanvasRasterMetrics() {
+  const rect = canvas.getBoundingClientRect();
+  const fallbackScale = window.devicePixelRatio || 1;
+  const widthCss = rect.width || 0;
+  const heightCss = rect.height || 0;
+  const scaleX = widthCss > 0 ? canvas.width / widthCss : fallbackScale;
+  const scaleY = heightCss > 0 ? canvas.height / heightCss : fallbackScale;
+  return { widthCss, heightCss, scaleX, scaleY };
+}
+
 const layoutRoot = document.getElementById("layoutRoot");
 const controlPanel = document.getElementById("controlPanel");
 const panelTab = document.getElementById("panelTab");
@@ -307,8 +318,8 @@ function stopDiagnosticsLoop() {
   }
 }
 
-function renderVectorScene(dpr, viewportOffsetX = 0, viewportOffsetY = 0) {
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY = 0) {
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   ctx.translate(
     state.centre.x + state.view.panX + viewportOffsetX,
     state.centre.y + state.view.panY + viewportOffsetY
@@ -319,10 +330,10 @@ function renderVectorScene(dpr, viewportOffsetX = 0, viewportOffsetY = 0) {
   if (state.showGear) drawRingPiece();
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
   if (canUseTraceLayer && ensureTraceLayerReady()) {
-    const { width, height } = canvas.getBoundingClientRect();
+    const { widthCss, heightCss } = getCanvasRasterMetrics();
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, 0, 0, width, height);
+    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, 0, 0, widthCss, heightCss);
     ctx.restore();
   } else {
     drawTrace();
@@ -373,27 +384,29 @@ function ensureViewInteractionCacheSurface(targetW, targetH) {
 }
 
 function captureViewInteractionSnapshot() {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
+  const { widthCss, heightCss } = getCanvasRasterMetrics();
   const overscan = viewInteractionCache.overscanFactor;
-  const cacheCssW = rect.width * overscan;
-  const cacheCssH = rect.height * overscan;
-  const targetW = Math.max(1, Math.floor(cacheCssW * dpr));
-  const targetH = Math.max(1, Math.floor(cacheCssH * dpr));
+  const cacheCssW = widthCss * overscan;
+  const cacheCssH = heightCss * overscan;
+  const { scaleX, scaleY } = getCanvasRasterMetrics();
+  const targetW = Math.max(1, Math.ceil(cacheCssW * scaleX));
+  const targetH = Math.max(1, Math.ceil(cacheCssH * scaleY));
 
   const cacheCtx = ensureViewInteractionCacheSurface(targetW, targetH);
   if (!cacheCtx) return;
 
-  const marginX = (cacheCssW - rect.width) * 0.5;
-  const marginY = (cacheCssH - rect.height) * 0.5;
+  const marginX = (cacheCssW - widthCss) * 0.5;
+  const marginY = (cacheCssH - heightCss) * 0.5;
+  const cacheScaleX = targetW / cacheCssW;
+  const cacheScaleY = targetH / cacheCssH;
 
   const previousCtx = ctx;
   ctx = cacheCtx;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(cacheScaleX, 0, 0, cacheScaleY, 0, 0);
   ctx.clearRect(0, 0, cacheCssW, cacheCssH);
   ctx.fillStyle = state.paperColour;
   ctx.fillRect(0, 0, cacheCssW, cacheCssH);
-  renderVectorScene(dpr, marginX, marginY);
+  renderVectorScene(cacheScaleX, cacheScaleY, marginX, marginY);
   ctx = previousCtx;
 
   viewInteractionCache.snapshotWidth = cacheCssW;
@@ -498,10 +511,9 @@ function rebuildTraceLayer() {
   const tctx = ensureTraceLayerSurface();
   if (!tctx) return false;
 
-  const dpr = window.devicePixelRatio || 1;
-  const { width, height } = canvas.getBoundingClientRect();
-  tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  tctx.clearRect(0, 0, width, height);
+  const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
+  tctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  tctx.clearRect(0, 0, widthCss, heightCss);
   tctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
   tctx.scale(state.view.zoom, state.view.zoom);
   tctx.translate(-state.centre.x, -state.centre.y);
@@ -898,7 +910,9 @@ function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.ceil(bounds.width * dpr);
   canvas.height = Math.ceil(bounds.height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const scaleX = bounds.width > 0 ? canvas.width / bounds.width : dpr;
+  const scaleY = bounds.height > 0 ? canvas.height / bounds.height : dpr;
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   state.centre.x = bounds.width / 2;
   state.centre.y = bounds.height / 2;
   return true;
@@ -921,8 +935,8 @@ function screenToWorld(clientX, clientY) {
 }
 
 function applyViewportTransform() {
-  const dpr = window.devicePixelRatio || 1;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const { scaleX, scaleY } = getCanvasRasterMetrics();
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   ctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
   ctx.scale(state.view.zoom, state.view.zoom);
   ctx.translate(-state.centre.x, -state.centre.y);
@@ -1377,23 +1391,22 @@ function drawHoles(cx, cy, phi) {
 
 function draw(fillBackground = true) {
   const frameStart = performance.now();
-  const { width, height } = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
+  const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  ctx.clearRect(0, 0, widthCss, heightCss);
   if (fillBackground) {
     ctx.fillStyle = state.paperColour;
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, widthCss, heightCss);
   }
 
   if (canUseViewInteractionCache(fillBackground)) {
-    drawViewInteractionCache(width, height);
+    drawViewInteractionCache(widthCss, heightCss);
     const frameEndFast = performance.now();
     diagnostics.renderMs = frameEndFast - frameStart;
     return;
   }
 
-  renderVectorScene(dpr, 0, 0);
+  renderVectorScene(scaleX, scaleY, 0, 0);
 
   const frameEnd = performance.now();
   diagnostics.renderMs = frameEnd - frameStart;
