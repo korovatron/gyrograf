@@ -62,8 +62,16 @@
           <select id="smallTeeth"></select>
         </label>
 
-        <div class="colour-row">
-          <label>
+        <fieldset class="radio-group" id="penTypeFieldset">
+          <legend>PEN TYPE</legend>
+          <div class="radio-options" id="penTypeOptions">
+            <label><input type="radio" name="penType" value="solid" checked /> Solid</label>
+            <label><input type="radio" name="penType" value="spectra" /> Spectra Pen</label>
+          </div>
+        </fieldset>
+
+        <div class="colour-row" id="colourRow">
+          <label id="inkColourLabel">
             Ink
             <input id="inkColour" type="color" value="#9900ff" />
           </label>
@@ -75,7 +83,7 @@
 
         <label>
           Pen width
-          <input id="strokeWidth" type="range" min="1" max="8" value="4" />
+          <input id="strokeWidth" type="range" min="1" max="14" value="4" />
         </label>
 
         <div class="actions">
@@ -111,7 +119,8 @@
         <div class="help-body">
           <div class="help-section">
             <p>Choose a ring piece, track, and wheel size from the controls.</p>
-            <p>Pick an <strong>Ink</strong> colour and <strong>Pen width</strong>, then drag a wheel hole to draw curves.</p>
+            <p>Choose a <strong>Pen</strong> mode, then set <strong>Pen width</strong> and drag a wheel hole to draw curves.</p>
+            <p><strong>Solid</strong> uses your selected ink colour. <strong>Spectra Pen</strong> paints a rainbow trace based on distance travelled.</p>
             <p>Use pinch-to-zoom on touch, mouse wheel to zoom on desktop, and drag empty space to pan.</p>
             <p><strong>Hide Gear</strong> toggles ring and wheel visibility so you can present the clean trace.</p>
             <p><strong>Reset View</strong> recentres and refits the current diagram.</p>

@@ -65,6 +65,8 @@ const controls = {
   ringPiece: null, // Will be set via radio buttons
   track: null, // Will be set via radio buttons
   smallTeeth: document.getElementById("smallTeeth"),
+  colourRow: document.getElementById("colourRow"),
+  inkColourLabel: document.getElementById("inkColourLabel"),
   inkColour: document.getElementById("inkColour"),
   paperColour: document.getElementById("paperColour"),
   strokeWidth: document.getElementById("strokeWidth"),
@@ -152,6 +154,7 @@ const state = {
   rackLength: 420,
   rackEndTeeth: 24,
   toothPitch: 1,
+  penMode: "solid",
   inkColour: "#ff0000",
   paperColour: "#ffffff",
   strokeWidth: 2,
@@ -175,6 +178,29 @@ const state = {
 
 let pendingLayoutFrame = 0;
 let cursorResetTimer = 0;
+
+function syncPenModeControls() {
+  const solidMode = state.penMode === "solid";
+  if (controls.inkColourLabel) {
+    controls.inkColourLabel.style.display = solidMode ? "" : "none";
+  }
+  if (controls.colourRow) {
+    controls.colourRow.classList.toggle("is-single", !solidMode);
+  }
+  if (controls.inkColour) {
+    controls.inkColour.disabled = !solidMode;
+  }
+}
+
+function selectedPenMode() {
+  const selected = document.querySelector('input[name="penType"]:checked');
+  return selected ? selected.value : "solid";
+}
+
+function spectraColourAtDistance(distance) {
+  const hue = ((distance * 0.75) % 360 + 360) % 360;
+  return `hsl(${hue} 100% 50%)`;
+}
 
 function hexToRgb(hex) {
   if (!hex) return null;
@@ -938,12 +964,34 @@ function drawTrace() {
     const stroke = state.strokes[s];
     if (!stroke.points || stroke.points.length < 2) continue;
 
+    const strokePenMode = String(stroke.penMode || "solid").toLowerCase();
+    const isSpectraStroke = strokePenMode === "spectra" || stroke.colour === null;
+    if (isSpectraStroke) {
+      ctx.lineWidth = stroke.width;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      for (let i = 1; i < stroke.points.length; i += 1) {
+        const p0 = stroke.points[i - 1];
+        const p1 = stroke.points[i];
+        const segmentDistance = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+        const d0 = Number.isFinite(p0.d) ? p0.d : 0;
+        const d1 = Number.isFinite(p1.d) ? p1.d : d0 + segmentDistance;
+        const dMid = (d0 + d1) * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.strokeStyle = spectraColourAtDistance(dMid);
+        ctx.stroke();
+      }
+      continue;
+    }
+
     ctx.beginPath();
     ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
     for (let i = 1; i < stroke.points.length; i += 1) {
       ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
     }
-    ctx.strokeStyle = stroke.colour;
+    ctx.strokeStyle = stroke.colour || state.inkColour;
     ctx.lineWidth = stroke.width;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -1159,8 +1207,14 @@ function pushTracePoint() {
 
   const points = state.activeStroke.points;
   const last = points[points.length - 1];
-  if (!last || Math.hypot(last.x - hp.x, last.y - hp.y) > 0.6) {
-    points.push(hp);
+  const segmentDistance = last ? Math.hypot(last.x - hp.x, last.y - hp.y) : 0;
+  if (!last || segmentDistance > 0.6) {
+    const lastDistance = last && Number.isFinite(last.d) ? last.d : 0;
+    points.push({
+      x: hp.x,
+      y: hp.y,
+      d: last ? lastDistance + segmentDistance : 0
+    });
   }
 }
 
@@ -1237,8 +1291,11 @@ canvas.addEventListener("pointerdown", (event) => {
     state.dragging = true;
     state.selectedHole = holeIndex;
     state.view.dragMode = "wheel";
+    const activePenMode = selectedPenMode() === "spectra" ? "spectra" : "solid";
+    state.penMode = activePenMode;
     state.activeStroke = {
-      colour: state.inkColour,
+      penMode: activePenMode,
+      colour: activePenMode === "solid" ? state.inkColour : null,
       width: state.strokeWidth,
       points: []
     };
@@ -1412,6 +1469,14 @@ controls.inkColour.addEventListener("input", () => {
   draw();
 });
 
+document.querySelectorAll('input[name="penType"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    state.penMode = selectedPenMode();
+    syncPenModeControls();
+    draw();
+  });
+});
+
 controls.paperColour.addEventListener("input", () => {
   state.paperColour = controls.paperColour.value;
   draw();
@@ -1551,9 +1616,11 @@ function init() {
   
   syncWheelOptions();
   state.smallTeeth = Number(controls.smallTeeth.value);
+  state.penMode = selectedPenMode();
   state.inkColour = controls.inkColour.value;
   state.paperColour = controls.paperColour.value;
   state.strokeWidth = Number(controls.strokeWidth.value);
+  syncPenModeControls();
   syncGearToggleButton();
 
   applyViewportPanelRule();

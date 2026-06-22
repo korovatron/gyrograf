@@ -252,6 +252,10 @@ input[type="color"] {
   margin-bottom: 0.8rem;
 }
 
+.colour-row.is-single {
+  grid-template-columns: 1fr;
+}
+
 .colour-row label {
   margin-bottom: 0;
 }
