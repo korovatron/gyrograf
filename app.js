@@ -982,6 +982,7 @@ function syncLayoutGeometry(options = {}) {
     state.strokes = state.strokes.map((stroke) => ({
       ...stroke,
       points: stroke.points.map((point) => ({
+        ...point,
         x: state.centre.x + (point.x - oldCentre.x) * scale,
         y: state.centre.y + (point.y - oldCentre.y) * scale
       }))
