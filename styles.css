@@ -7,6 +7,7 @@
   --accent-soft: #f3c9b7;
   --ring-a: #2f4858;
   --ring-b: #f26430;
+  --paper-colour: #ffffff;
   --panel-w: 330px;
   --tab-w: 26px;
   /* iOS safe area insets - populated by env() and used throughout */
@@ -332,7 +333,7 @@ button.is-off {
   min-height: 0;
   height: 100%;
   border-radius: 0;
-  background: linear-gradient(185deg, #fff6ea, #fde9d4);
+  background: var(--paper-colour, #ffffff);
   border: 0;
   box-shadow: none;
   overflow: hidden;

@@ -30,6 +30,10 @@ function getCanvasRasterMetrics() {
   return { widthCss, heightCss, scaleX, scaleY };
 }
 
+function syncPaperSurfaceColour() {
+  document.documentElement.style.setProperty('--paper-colour', state.paperColour || '#ffffff');
+}
+
 const layoutRoot = document.getElementById("layoutRoot");
 const controlPanel = document.getElementById("controlPanel");
 const panelTab = document.getElementById("panelTab");
@@ -1392,11 +1396,13 @@ function drawHoles(cx, cy, phi) {
 function draw(fillBackground = true) {
   const frameStart = performance.now();
   const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
+  const bleedX = 1 / Math.max(scaleX, 1);
+  const bleedY = 1 / Math.max(scaleY, 1);
   ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-  ctx.clearRect(0, 0, widthCss, heightCss);
+  ctx.clearRect(-bleedX, -bleedY, widthCss + bleedX * 2, heightCss + bleedY * 2);
   if (fillBackground) {
     ctx.fillStyle = state.paperColour;
-    ctx.fillRect(0, 0, widthCss, heightCss);
+    ctx.fillRect(-bleedX, -bleedY, widthCss + bleedX * 2, heightCss + bleedY * 2);
   }
 
   if (canUseViewInteractionCache(fillBackground)) {
@@ -1851,6 +1857,7 @@ document.querySelectorAll('input[name="penType"]').forEach((radio) => {
 controls.paperColour.addEventListener("input", () => {
   state.paperColour = controls.paperColour.value;
   localStorage.setItem('paperColour', state.paperColour);
+  syncPaperSurfaceColour();
   draw();
 });
 
@@ -2012,6 +2019,7 @@ function init() {
   } else {
     state.paperColour = controls.paperColour.value;
   }
+  syncPaperSurfaceColour();
   state.strokeWidth = Number(controls.strokeWidth.value);
   syncPenModeControls();
   syncGearToggleButton();
