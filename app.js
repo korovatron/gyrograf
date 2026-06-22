@@ -9,8 +9,12 @@ window.addEventListener('resize', setActualVH);
 // orientationchange fires before the browser has finished resizing, so we
 // delay slightly to capture the final innerHeight after rotation completes.
 window.addEventListener('orientationchange', () => setTimeout(setActualVH, 100));
-// pageshow covers the iOS back-forward cache restore case.
-window.addEventListener('pageshow', () => setTimeout(setActualVH, 0));
+// pageshow covers the iOS back-forward cache restore case and SW updates.
+window.addEventListener('pageshow', () => {
+  setTimeout(setActualVH, 0);
+  // Reschedule layout geometry sync after viewport height is updated
+  setTimeout(() => scheduleLayoutGeometrySync({ fitView: true }), 50);
+});
 
 const canvas = document.getElementById("stage");
 const mainCtx = canvas.getContext("2d");
@@ -1944,7 +1948,8 @@ window.addEventListener("resize", () => {
 
 window.addEventListener("orientationchange", () => {
   applyViewportPanelRule();
-  scheduleLayoutGeometrySync({ fitView: true });
+  // Delay layout sync to match setActualVH timing, ensuring --actual-vh is updated first
+  setTimeout(() => scheduleLayoutGeometrySync({ fitView: true }), 100);
 });
 
 panelTab.addEventListener("click", () => {
