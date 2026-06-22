@@ -892,8 +892,8 @@ function resizeCanvas() {
   }
 
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(bounds.width * dpr);
-  canvas.height = Math.floor(bounds.height * dpr);
+  canvas.width = Math.ceil(bounds.width * dpr);
+  canvas.height = Math.ceil(bounds.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   state.centre.x = bounds.width / 2;
   state.centre.y = bounds.height / 2;
