@@ -100,6 +100,7 @@ const controls = {
   aboutButton: document.getElementById("aboutButton"),
   aboutOverlay: document.getElementById("aboutOverlay"),
   closeAboutBtn: document.getElementById("closeAboutBtn"),
+  showAboutOnStartup: document.getElementById("showAboutOnStartup"),
   trackOptions: document.getElementById("trackOptions"),
   trackFieldset: document.getElementById("trackFieldset"),
   exportOverlay: document.getElementById("exportOverlay"),
@@ -108,6 +109,18 @@ const controls = {
   exportTransparent: document.getElementById("exportTransparent"),
   doExportBtn: document.getElementById("doExportBtn")
 };
+
+const SHOW_ABOUT_ON_STARTUP_KEY = "showAboutOnStartup";
+
+function getShowAboutOnStartupPreference() {
+  const saved = localStorage.getItem(SHOW_ABOUT_ON_STARTUP_KEY);
+  if (saved === null) return true;
+  return saved === "1";
+}
+
+function setShowAboutOnStartupPreference(enabled) {
+  localStorage.setItem(SHOW_ABOUT_ON_STARTUP_KEY, enabled ? "1" : "0");
+}
 
 function canUseNativeFileShare() {
   const isTouchPrimaryPointer = window.matchMedia("(pointer: coarse)").matches;
@@ -176,7 +189,7 @@ const state = {
   toothPitch: 1,
   penMode: "solid",
   inkColour: "#ff0000",
-  paperColour: "#ffffff",
+  paperColour: "#000000",
   strokeWidth: 2,
   traceRevision: 0,
   holes: [],
@@ -1916,6 +1929,12 @@ controls.aboutOverlay.addEventListener("click", (event) => {
   }
 });
 
+if (controls.showAboutOnStartup) {
+  controls.showAboutOnStartup.addEventListener("change", () => {
+    setShowAboutOnStartupPreference(controls.showAboutOnStartup.checked);
+  });
+}
+
 controls.closeExportBtn.addEventListener("click", () => {
   closeExportModal();
 });
@@ -2024,6 +2043,11 @@ function init() {
   syncPenModeControls();
   syncGearToggleButton();
 
+  const showAboutOnStartup = getShowAboutOnStartupPreference();
+  if (controls.showAboutOnStartup) {
+    controls.showAboutOnStartup.checked = showAboutOnStartup;
+  }
+
   if (diagnostics.enabled) {
     startDiagnosticsLoop();
   }
@@ -2032,6 +2056,11 @@ function init() {
   syncLayoutGeometry();
   fitViewToContent();
   draw();
+
+  if (showAboutOnStartup) {
+    openAboutModal();
+  }
+
   updateCanvasCursor();
 }
 

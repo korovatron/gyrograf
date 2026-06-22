@@ -7,7 +7,7 @@
   --accent-soft: #f3c9b7;
   --ring-a: #2f4858;
   --ring-b: #f26430;
-  --paper-colour: #ffffff;
+  --paper-colour: #000000;
   --panel-w: 330px;
   --tab-w: 26px;
   /* iOS safe area insets - populated by env() and used throughout */
@@ -491,6 +491,59 @@ canvas {
   border-top: 1px solid rgba(255, 255, 255, 0.18);
   margin-top: 14px;
   padding-top: 14px;
+}
+
+.about-startup-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 1rem;
+  line-height: 1.5;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #E8F4FD;
+  cursor: pointer;
+}
+
+.about-startup-checkbox {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 2px solid #E8F4FD;
+  border-radius: 4px;
+  background: transparent;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+}
+
+.about-startup-checkbox::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+  transform: rotate(45deg) scale(0);
+  transform-origin: center;
+  transition: transform 120ms ease-out;
+}
+
+.about-startup-checkbox:checked {
+  background: #FFD700;
+  border-color: #FFD700;
+}
+
+.about-startup-checkbox:checked::after {
+  transform: rotate(45deg) scale(1);
+}
+
+.about-startup-checkbox:focus-visible {
+  outline: 2px solid rgba(255, 215, 0, 0.45);
+  outline-offset: 2px;
 }
 
 .help-section a {
