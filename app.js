@@ -681,6 +681,62 @@ function rebuildTraceLayer() {
   return true;
 }
 
+function appendLatestStrokeSegmentToTraceLayer(stroke) {
+  if (!stroke || !traceLayer.valid) return false;
+  if (traceLayer.revision !== state.traceRevision - 1) return false;
+  if (traceLayer.viewSignature !== traceViewSignature()) return false;
+
+  const points = stroke.points || [];
+  if (points.length < 2) {
+    traceLayer.revision = state.traceRevision;
+    return true;
+  }
+
+  const tctx = traceLayer.ctx || ensureTraceLayerSurface();
+  if (!tctx) return false;
+
+  const p0 = points[points.length - 2];
+  const p1 = points[points.length - 1];
+  const paperOffsetX = traceLayer.snapshotPaperOffsetX;
+  const paperOffsetY = traceLayer.snapshotPaperOffsetY;
+
+  const { scaleX, scaleY } = getCanvasRasterMetrics();
+  tctx.save();
+  tctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  tctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
+  tctx.scale(state.view.zoom, state.view.zoom);
+  tctx.translate(-state.centre.x, -state.centre.y);
+
+  const strokePenMode = String(stroke.penMode || "solid").toLowerCase();
+  const isSpectraStroke = strokePenMode === "spectra" || stroke.colour === null;
+  const x0 = p0.x + paperOffsetX;
+  const y0 = p0.y + paperOffsetY;
+  const x1 = p1.x + paperOffsetX;
+  const y1 = p1.y + paperOffsetY;
+
+  tctx.beginPath();
+  tctx.moveTo(x0, y0);
+  tctx.lineTo(x1, y1);
+  tctx.lineWidth = stroke.width;
+  tctx.lineJoin = "round";
+  tctx.lineCap = "round";
+
+  if (isSpectraStroke) {
+    const segmentDistance = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    const d0 = Number.isFinite(p0.d) ? p0.d : 0;
+    const d1 = Number.isFinite(p1.d) ? p1.d : d0 + segmentDistance;
+    const dMid = (d0 + d1) * 0.5;
+    tctx.strokeStyle = spectraColourAtDistance(dMid);
+  } else {
+    tctx.strokeStyle = stroke.colour || state.inkColour;
+  }
+  tctx.stroke();
+  tctx.restore();
+
+  traceLayer.revision = state.traceRevision;
+  return true;
+}
+
 function ensureTraceLayerReady() {
   if (!traceLayer.valid) {
     return rebuildTraceLayer();
@@ -1978,6 +2034,7 @@ function pushTracePoint(force = false) {
       d: last ? lastDistance + segmentDistance : 0
     });
     state.traceRevision += 1;
+    appendLatestStrokeSegmentToTraceLayer(state.activeStroke);
   }
 }
 
