@@ -7,7 +7,7 @@
   --accent-soft: #f3c9b7;
   --ring-a: #2f4858;
   --ring-b: #f26430;
-  --paper-colour: #000000;
+  --paper-colour: #ffffff;
   --panel-w: 330px;
   --tab-w: 26px;
   /* iOS safe area insets - populated by env() and used throughout */
