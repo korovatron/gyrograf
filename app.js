@@ -260,8 +260,13 @@ const viewInteractionCache = {
 const traceLayer = {
   canvas: null,
   ctx: null,
+  overscanFactor: 1.8,
   widthPx: 0,
   heightPx: 0,
+  snapshotWidth: 0,
+  snapshotHeight: 0,
+  snapshotOffsetX: 0,
+  snapshotOffsetY: 0,
   valid: false,
   revision: -1,
   viewSignature: "",
@@ -364,9 +369,13 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
     const { widthCss, heightCss } = getCanvasRasterMetrics();
     const paperDeltaX = (state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom;
     const paperDeltaY = (state.paperOffsetY - traceLayer.snapshotPaperOffsetY) * state.view.zoom;
+    const destX = paperDeltaX - traceLayer.snapshotOffsetX;
+    const destY = paperDeltaY - traceLayer.snapshotOffsetY;
+    const destW = traceLayer.snapshotWidth || widthCss;
+    const destH = traceLayer.snapshotHeight || heightCss;
     ctx.save();
     ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, paperDeltaX, paperDeltaY, widthCss, heightCss);
+    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, destX, destY, destW, destH);
     ctx.restore();
   } else {
     drawTrace();
@@ -636,9 +645,7 @@ function traceViewSignature() {
   ].join("|");
 }
 
-function ensureTraceLayerSurface() {
-  const targetW = canvas.width;
-  const targetH = canvas.height;
+function ensureTraceLayerSurface(targetW, targetH) {
   if (!targetW || !targetH) return null;
 
   if (!traceLayer.canvas) {
@@ -658,13 +665,23 @@ function ensureTraceLayerSurface() {
 }
 
 function rebuildTraceLayer() {
-  const tctx = ensureTraceLayerSurface();
+  const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
+  const overscan = traceLayer.overscanFactor;
+  const cacheCssW = widthCss * overscan;
+  const cacheCssH = heightCss * overscan;
+  const marginX = (cacheCssW - widthCss) * 0.5;
+  const marginY = (cacheCssH - heightCss) * 0.5;
+  const targetW = Math.max(1, Math.ceil(cacheCssW * scaleX));
+  const targetH = Math.max(1, Math.ceil(cacheCssH * scaleY));
+
+  const tctx = ensureTraceLayerSurface(targetW, targetH);
   if (!tctx) return false;
 
-  const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
-  tctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-  tctx.clearRect(0, 0, widthCss, heightCss);
-  tctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
+  const cacheScaleX = targetW / cacheCssW;
+  const cacheScaleY = targetH / cacheCssH;
+  tctx.setTransform(cacheScaleX, 0, 0, cacheScaleY, 0, 0);
+  tctx.clearRect(0, 0, cacheCssW, cacheCssH);
+  tctx.translate(state.centre.x + state.view.panX + marginX, state.centre.y + state.view.panY + marginY);
   tctx.scale(state.view.zoom, state.view.zoom);
   tctx.translate(-state.centre.x, -state.centre.y);
 
@@ -675,6 +692,10 @@ function rebuildTraceLayer() {
 
   traceLayer.revision = state.traceRevision;
   traceLayer.viewSignature = traceViewSignature();
+  traceLayer.snapshotWidth = cacheCssW;
+  traceLayer.snapshotHeight = cacheCssH;
+  traceLayer.snapshotOffsetX = marginX;
+  traceLayer.snapshotOffsetY = marginY;
   traceLayer.snapshotPaperOffsetX = state.paperOffsetX;
   traceLayer.snapshotPaperOffsetY = state.paperOffsetY;
   traceLayer.valid = true;
@@ -692,7 +713,7 @@ function appendLatestStrokeSegmentToTraceLayer(stroke) {
     return true;
   }
 
-  const tctx = traceLayer.ctx || ensureTraceLayerSurface();
+  const tctx = traceLayer.ctx || ensureTraceLayerSurface(traceLayer.widthPx, traceLayer.heightPx);
   if (!tctx) return false;
 
   const p0 = points[points.length - 2];
@@ -700,10 +721,16 @@ function appendLatestStrokeSegmentToTraceLayer(stroke) {
   const paperOffsetX = traceLayer.snapshotPaperOffsetX;
   const paperOffsetY = traceLayer.snapshotPaperOffsetY;
 
-  const { scaleX, scaleY } = getCanvasRasterMetrics();
+  const cacheCssW = traceLayer.snapshotWidth || getCanvasRasterMetrics().widthCss;
+  const cacheCssH = traceLayer.snapshotHeight || getCanvasRasterMetrics().heightCss;
+  const cacheScaleX = traceLayer.widthPx / Math.max(1, cacheCssW);
+  const cacheScaleY = traceLayer.heightPx / Math.max(1, cacheCssH);
   tctx.save();
-  tctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-  tctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
+  tctx.setTransform(cacheScaleX, 0, 0, cacheScaleY, 0, 0);
+  tctx.translate(
+    state.centre.x + state.view.panX + traceLayer.snapshotOffsetX,
+    state.centre.y + state.view.panY + traceLayer.snapshotOffsetY
+  );
   tctx.scale(state.view.zoom, state.view.zoom);
   tctx.translate(-state.centre.x, -state.centre.y);
 
@@ -747,11 +774,11 @@ function ensureTraceLayerReady() {
   if (traceLayer.viewSignature !== traceViewSignature()) {
     return rebuildTraceLayer();
   }
-  const { widthCss, heightCss } = getCanvasRasterMetrics();
   const deltaScreenX = Math.abs((state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom);
   const deltaScreenY = Math.abs((state.paperOffsetY - traceLayer.snapshotPaperOffsetY) * state.view.zoom);
-  const rebuildThreshold = Math.min(widthCss, heightCss) * 0.35;
-  if (deltaScreenX > rebuildThreshold || deltaScreenY > rebuildThreshold) {
+  const availableMarginX = Math.max(8, (traceLayer.snapshotOffsetX || 0) - 2);
+  const availableMarginY = Math.max(8, (traceLayer.snapshotOffsetY || 0) - 2);
+  if (deltaScreenX > availableMarginX || deltaScreenY > availableMarginY) {
     return rebuildTraceLayer();
   }
   return true;
