@@ -976,6 +976,52 @@ function floodFillImageData(sourceData, targetData, width, height, startX, start
   return changed;
 }
 
+function featherFillIntoEdge(sourceData, targetData, width, height, fillRgb) {
+  let touched = false;
+  const idxAt = (x, y) => (y * width + x) * 4;
+  const neighbourOffsets = [
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1]
+  ];
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const idx = idxAt(x, y);
+        if (targetData[idx + 3] > 0) continue;
+
+        const sourceAlpha = sourceData[idx + 3];
+        if (sourceAlpha < 4 || sourceAlpha >= 255) continue;
+
+        let hasFilledNeighbour = false;
+        for (let i = 0; i < neighbourOffsets.length; i += 1) {
+          const [ox, oy] = neighbourOffsets[i];
+          if (targetData[idxAt(x + ox, y + oy) + 3] > 0) {
+            hasFilledNeighbour = true;
+            break;
+          }
+        }
+        if (!hasFilledNeighbour) continue;
+
+        targetData[idx] = fillRgb.r;
+        targetData[idx + 1] = fillRgb.g;
+        targetData[idx + 2] = fillRgb.b;
+        // Opaque underpaint prevents paper-colour sparkle through AA edges.
+        targetData[idx + 3] = 255;
+        touched = true;
+      }
+    }
+  }
+
+  return touched;
+}
+
 function applyFillOperationToLayer(operation) {
   if (!fillLayer.ctx || !fillLayer.widthPx || !fillLayer.heightPx) return;
   const rgb = hexToRgb(operation.colour);
@@ -1025,6 +1071,7 @@ function applyFillOperationToLayer(operation) {
   const fillImage = fillLayer.ctx.getImageData(0, 0, fillLayer.widthPx, fillLayer.heightPx);
   const changed = floodFillImageData(workImage.data, fillImage.data, fillLayer.widthPx, fillLayer.heightPx, seedX, seedY, rgb);
   if (!changed) return;
+  featherFillIntoEdge(workImage.data, fillImage.data, fillLayer.widthPx, fillLayer.heightPx, rgb);
   fillLayer.ctx.putImageData(fillImage, 0, 0);
 }
 
