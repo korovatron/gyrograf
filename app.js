@@ -189,7 +189,7 @@ const state = {
   toothPitch: 1,
   penMode: "solid",
   inkColour: "#ff0000",
-  paperColour: "#000000",
+  paperColour: "#ffffff",
   strokeWidth: 2,
   traceRevision: 0,
   holes: [],
@@ -416,7 +416,6 @@ function captureViewInteractionSnapshot() {
   const marginY = (cacheCssH - heightCss) * 0.5;
   const cacheScaleX = targetW / cacheCssW;
   const cacheScaleY = targetH / cacheCssH;
-
   const previousCtx = ctx;
   ctx = cacheCtx;
   ctx.setTransform(cacheScaleX, 0, 0, cacheScaleY, 0, 0);
@@ -430,6 +429,7 @@ function captureViewInteractionSnapshot() {
   viewInteractionCache.snapshotHeight = cacheCssH;
   viewInteractionCache.snapshotOffsetX = marginX;
   viewInteractionCache.snapshotOffsetY = marginY;
+
   viewInteractionCache.snapshotZoom = state.view.zoom;
   viewInteractionCache.snapshotPanX = state.view.panX;
   viewInteractionCache.snapshotPanY = state.view.panY;
@@ -464,7 +464,6 @@ function canUseViewInteractionCache(fillBackground) {
 }
 
 function drawViewInteractionCache(width, height) {
-  if (!viewInteractionCache.valid || !viewInteractionCache.canvas) return;
   const snapshotZoom = viewInteractionCache.snapshotZoom || 1;
   const scale = state.view.zoom / snapshotZoom;
   const tx =
@@ -1116,6 +1115,29 @@ function rotateAround(point, centre, angle) {
   };
 }
 
+function gcdInt(a, b) {
+  let x = Math.abs(Math.trunc(a));
+  let y = Math.abs(Math.trunc(b));
+  while (y !== 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x || 1;
+}
+
+function strokeClosureThetaSpan() {
+  const teethGcd = gcdInt(state.bigTeeth, state.smallTeeth);
+
+  if (isRackMode()) {
+    const piece = selectedPiece();
+    const loopsForClosure = state.smallTeeth / gcdInt(2 * (piece.teeth + state.rackEndTeeth), state.smallTeeth);
+    return rackLoopLength() * loopsForClosure;
+  }
+
+  return ((Math.PI * 2) * state.smallTeeth) / teethGcd;
+}
+
 function rackPathPoseAt(travel) {
   const straight = rackStraightLength();
   const radius = rackEndRadius();
@@ -1586,7 +1608,7 @@ function fitViewToContent(animate = false) {
   state.view.animationFrame = requestAnimationFrame(tick);
 }
 
-function pushTracePoint() {
+function pushTracePoint(force = false) {
   if (state.selectedHole < 0) return;
   const hp = holeWorldPosition(state.selectedHole);
   if (!hp) return;
@@ -1595,7 +1617,7 @@ function pushTracePoint() {
   const points = state.activeStroke.points;
   const last = points[points.length - 1];
   const segmentDistance = last ? Math.hypot(last.x - hp.x, last.y - hp.y) : 0;
-  if (!last || segmentDistance > 0.6) {
+  if (!last || force || segmentDistance > 0.6) {
     const lastDistance = last && Number.isFinite(last.d) ? last.d : 0;
     points.push({
       x: hp.x,
@@ -1613,11 +1635,55 @@ function pushInterpolatedTrace(deltaTheta) {
   const stepMagnitude = isRackMode() ? Math.max(0.65, state.toothPitch * 0.22) : maxStep;
   const steps = Math.max(1, Math.ceil(Math.abs(deltaTheta) / stepMagnitude));
   const startTheta = state.theta;
+  const epsilon = 1e-6;
 
   for (let i = 1; i <= steps; i += 1) {
+    const prevTheta = state.theta;
     const nextTheta = startTheta + (deltaTheta * i) / steps;
+    const stroke = state.activeStroke;
+
+    if (!stroke) {
+      state.theta = nextTheta;
+      continue;
+    }
+
+    if (!stroke.closedCycle) {
+      const stepDelta = nextTheta - prevTheta;
+      if (Math.abs(stepDelta) <= epsilon) {
+        state.theta = nextTheta;
+        continue;
+      }
+
+      const progressAtPrev = Math.abs(prevTheta - stroke.thetaStart);
+      const progressAtNext = Math.abs(nextTheta - stroke.thetaStart);
+
+      if (progressAtPrev >= stroke.closureThetaSpan - epsilon) {
+        stroke.closedCycle = true;
+        state.theta = nextTheta;
+        continue;
+      }
+
+      if (progressAtNext >= stroke.closureThetaSpan - epsilon) {
+        const progressStep = Math.abs(progressAtNext - progressAtPrev);
+        const remaining = stroke.closureThetaSpan - progressAtPrev;
+        const ratio = progressStep > epsilon ? Math.max(0, Math.min(1, remaining / progressStep)) : 1;
+        const closureTheta = prevTheta + (nextTheta - prevTheta) * ratio;
+
+        // Force one exact closure sample before stopping further point capture.
+        state.theta = closureTheta;
+        pushTracePoint(true);
+
+        stroke.closedCycle = true;
+        state.theta = nextTheta;
+        continue;
+      }
+
+      state.theta = nextTheta;
+      pushTracePoint();
+      continue;
+    }
+
     state.theta = nextTheta;
-    pushTracePoint();
   }
 }
 
@@ -1686,6 +1752,9 @@ canvas.addEventListener("pointerdown", (event) => {
       penMode: activePenMode,
       colour: activePenMode === "solid" ? state.inkColour : null,
       width: state.strokeWidth,
+      closureThetaSpan: strokeClosureThetaSpan(),
+      thetaStart: state.theta,
+      closedCycle: false,
       points: []
     };
     state.strokes.push(state.activeStroke);
