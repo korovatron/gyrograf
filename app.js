@@ -168,6 +168,8 @@ function syncExportActionLabels() {
 const state = {
   centre: { x: 0, y: 0 },
   theta: 0,
+  paperOffsetX: 0,
+  paperOffsetY: 0,
   selectedHole: -1,
   strokes: [],
   activeStroke: null,
@@ -239,8 +241,11 @@ const viewInteractionCache = {
   snapshotZoom: 1,
   snapshotPanX: 0,
   snapshotPanY: 0,
+  snapshotPaperOffsetX: 0,
+  snapshotPaperOffsetY: 0,
   valid: false,
   active: false,
+  showPaperGrid: false,
   settleTimer: 0
 };
 
@@ -344,7 +349,6 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   ctx.scale(state.view.zoom, state.view.zoom);
   ctx.translate(-state.centre.x, -state.centre.y);
 
-  if (state.showGear) drawRingPiece();
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
   if (canUseTraceLayer && ensureTraceLayerReady()) {
     const { widthCss, heightCss } = getCanvasRasterMetrics();
@@ -355,6 +359,8 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   } else {
     drawTrace();
   }
+
+  if (state.showGear) drawRingPiece();
 
   const sc = smallCentre();
   const phi = smallRotation();
@@ -422,6 +428,15 @@ function captureViewInteractionSnapshot() {
   ctx.clearRect(0, 0, cacheCssW, cacheCssH);
   ctx.fillStyle = state.paperColour;
   ctx.fillRect(0, 0, cacheCssW, cacheCssH);
+
+  if (viewInteractionCache.showPaperGrid) {
+    drawPaperGrid(cacheCssW, cacheCssH, {
+      panX: state.view.panX + marginX * state.view.zoom,
+      panY: state.view.panY + marginY * state.view.zoom,
+      zoom: state.view.zoom
+    });
+  }
+
   renderVectorScene(cacheScaleX, cacheScaleY, marginX, marginY);
   ctx = previousCtx;
 
@@ -433,14 +448,17 @@ function captureViewInteractionSnapshot() {
   viewInteractionCache.snapshotZoom = state.view.zoom;
   viewInteractionCache.snapshotPanX = state.view.panX;
   viewInteractionCache.snapshotPanY = state.view.panY;
+  viewInteractionCache.snapshotPaperOffsetX = state.paperOffsetX;
+  viewInteractionCache.snapshotPaperOffsetY = state.paperOffsetY;
   viewInteractionCache.valid = true;
 }
 
-function beginViewInteraction() {
+function beginViewInteraction(showPaperGrid = false) {
   if (viewInteractionCache.settleTimer) {
     clearTimeout(viewInteractionCache.settleTimer);
     viewInteractionCache.settleTimer = 0;
   }
+  viewInteractionCache.showPaperGrid = showPaperGrid;
   if (!viewInteractionCache.active) {
     captureViewInteractionSnapshot();
     viewInteractionCache.active = true;
@@ -455,8 +473,23 @@ function settleViewInteraction(delayMs = 120) {
     viewInteractionCache.settleTimer = 0;
     viewInteractionCache.active = false;
     viewInteractionCache.valid = false;
+    viewInteractionCache.showPaperGrid = false;
     draw();
   }, delayMs);
+}
+
+function disableViewInteractionCache() {
+  if (viewInteractionCache.settleTimer) {
+    clearTimeout(viewInteractionCache.settleTimer);
+    viewInteractionCache.settleTimer = 0;
+  }
+  viewInteractionCache.active = false;
+  viewInteractionCache.valid = false;
+  viewInteractionCache.showPaperGrid = false;
+}
+
+function shouldShowPaperGrid() {
+  return (state.dragging && state.view.dragMode === "pan") || viewInteractionCache.showPaperGrid;
 }
 
 function canUseViewInteractionCache(fillBackground) {
@@ -466,14 +499,18 @@ function canUseViewInteractionCache(fillBackground) {
 function drawViewInteractionCache(width, height) {
   const snapshotZoom = viewInteractionCache.snapshotZoom || 1;
   const scale = state.view.zoom / snapshotZoom;
+  const paperDeltaX = state.paperOffsetX - viewInteractionCache.snapshotPaperOffsetX;
+  const paperDeltaY = state.paperOffsetY - viewInteractionCache.snapshotPaperOffsetY;
   const tx =
     state.centre.x +
     state.view.panX -
-    scale * (state.centre.x + viewInteractionCache.snapshotPanX + viewInteractionCache.snapshotOffsetX);
+    scale * (state.centre.x + viewInteractionCache.snapshotPanX + viewInteractionCache.snapshotOffsetX) +
+    paperDeltaX * state.view.zoom;
   const ty =
     state.centre.y +
     state.view.panY -
-    scale * (state.centre.y + viewInteractionCache.snapshotPanY + viewInteractionCache.snapshotOffsetY);
+    scale * (state.centre.y + viewInteractionCache.snapshotPanY + viewInteractionCache.snapshotOffsetY) +
+    paperDeltaY * state.view.zoom;
   const destW = viewInteractionCache.snapshotWidth * scale;
   const destH = viewInteractionCache.snapshotHeight * scale;
 
@@ -498,7 +535,9 @@ function traceViewSignature() {
     state.centre.y.toFixed(3),
     state.view.zoom.toFixed(6),
     state.view.panX.toFixed(3),
-    state.view.panY.toFixed(3)
+    state.view.panY.toFixed(3),
+    state.paperOffsetX.toFixed(3),
+    state.paperOffsetY.toFixed(3)
   ].join("|");
 }
 
@@ -1372,6 +1411,9 @@ function drawRingPiece() {
 }
 
 function drawTrace() {
+  const paperOffsetX = state.paperOffsetX;
+  const paperOffsetY = state.paperOffsetY;
+
   for (let s = 0; s < state.strokes.length; s += 1) {
     const stroke = state.strokes[s];
     if (!stroke.points || stroke.points.length < 2) continue;
@@ -1391,8 +1433,8 @@ function drawTrace() {
         const d1 = Number.isFinite(p1.d) ? p1.d : d0 + segmentDistance;
         const dMid = (d0 + d1) * 0.5;
         ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(p1.x, p1.y);
+        ctx.moveTo(p0.x + paperOffsetX, p0.y + paperOffsetY);
+        ctx.lineTo(p1.x + paperOffsetX, p1.y + paperOffsetY);
         ctx.strokeStyle = spectraColourAtDistance(dMid);
         ctx.stroke();
       }
@@ -1400,9 +1442,9 @@ function drawTrace() {
     }
 
     ctx.beginPath();
-    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    ctx.moveTo(stroke.points[0].x + paperOffsetX, stroke.points[0].y + paperOffsetY);
     for (let i = 1; i < stroke.points.length; i += 1) {
-      ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      ctx.lineTo(stroke.points[i].x + paperOffsetX, stroke.points[i].y + paperOffsetY);
     }
     ctx.strokeStyle = stroke.colour || state.inkColour;
     ctx.lineWidth = stroke.width;
@@ -1434,6 +1476,45 @@ function drawHoles(cx, cy, phi) {
   }
 }
 
+function drawPaperGrid(widthCss, heightCss, transform = {}) {
+  const gridSize = 176;
+  const zoom = transform.zoom ?? state.view.zoom;
+  const panX = transform.panX ?? state.view.panX;
+  const panY = transform.panY ?? state.view.panY;
+
+  const paperRgb = hexToRgb(state.paperColour);
+  const paperLuma = paperRgb
+    ? 0.2126 * paperRgb.r + 0.7152 * paperRgb.g + 0.0722 * paperRgb.b
+    : 255;
+
+  // Slightly higher contrast on darker paper keeps the grid visible but unobtrusive.
+  ctx.fillStyle = paperLuma < 128 ? "rgba(255, 255, 255, 0.07)" : "rgba(0, 0, 0, 0.04)";
+
+  const leftWorld = state.centre.x + (0 - state.centre.x - panX) / zoom;
+  const rightWorld = state.centre.x + (widthCss - state.centre.x - panX) / zoom;
+  const topWorld = state.centre.y + (0 - state.centre.y - panY) / zoom;
+  const bottomWorld = state.centre.y + (heightCss - state.centre.y - panY) / zoom;
+
+  const startCol = Math.floor((leftWorld - state.paperOffsetX) / gridSize) - 1;
+  const endCol = Math.ceil((rightWorld - state.paperOffsetX) / gridSize) + 1;
+  const startRow = Math.floor((topWorld - state.paperOffsetY) / gridSize) - 1;
+  const endRow = Math.ceil((bottomWorld - state.paperOffsetY) / gridSize) + 1;
+
+  const screenCellSize = gridSize * zoom;
+
+  for (let row = startRow; row <= endRow; row += 1) {
+    const worldY = row * gridSize + state.paperOffsetY;
+    const y = state.centre.y + panY + (worldY - state.centre.y) * zoom;
+    for (let col = startCol; col <= endCol; col += 1) {
+      if ((row + col) % 2 === 0) {
+        const worldX = col * gridSize + state.paperOffsetX;
+        const x = state.centre.x + panX + (worldX - state.centre.x) * zoom;
+        ctx.fillRect(x, y, screenCellSize, screenCellSize);
+      }
+    }
+  }
+}
+
 function draw(fillBackground = true) {
   const frameStart = performance.now();
   const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
@@ -1444,6 +1525,10 @@ function draw(fillBackground = true) {
   if (fillBackground) {
     ctx.fillStyle = state.paperColour;
     ctx.fillRect(-bleedX, -bleedY, widthCss + bleedX * 2, heightCss + bleedY * 2);
+
+    if (shouldShowPaperGrid()) {
+      drawPaperGrid(widthCss, heightCss);
+    }
   }
 
   if (canUseViewInteractionCache(fillBackground)) {
@@ -1511,10 +1596,12 @@ function getContentBounds() {
       const stroke = state.strokes[s];
       for (let i = 0; i < stroke.points.length; i += 1) {
         const point = stroke.points[i];
-        if (point.x < bounds.minX) bounds.minX = point.x;
-        if (point.y < bounds.minY) bounds.minY = point.y;
-        if (point.x > bounds.maxX) bounds.maxX = point.x;
-        if (point.y > bounds.maxY) bounds.maxY = point.y;
+        const px = point.x + state.paperOffsetX;
+        const py = point.y + state.paperOffsetY;
+        if (px < bounds.minX) bounds.minX = px;
+        if (py < bounds.minY) bounds.minY = py;
+        if (px > bounds.maxX) bounds.maxX = px;
+        if (py > bounds.maxY) bounds.maxY = py;
       }
     }
 
@@ -1538,10 +1625,12 @@ function getContentBounds() {
     const stroke = state.strokes[s];
     for (let i = 0; i < stroke.points.length; i += 1) {
       const point = stroke.points[i];
-      if (point.x < bounds.minX) bounds.minX = point.x;
-      if (point.y < bounds.minY) bounds.minY = point.y;
-      if (point.x > bounds.maxX) bounds.maxX = point.x;
-      if (point.y > bounds.maxY) bounds.maxY = point.y;
+      const px = point.x + state.paperOffsetX;
+      const py = point.y + state.paperOffsetY;
+      if (px < bounds.minX) bounds.minX = px;
+      if (py < bounds.minY) bounds.minY = py;
+      if (px > bounds.maxX) bounds.maxX = px;
+      if (py > bounds.maxY) bounds.maxY = py;
     }
   }
 
@@ -1616,12 +1705,14 @@ function pushTracePoint(force = false) {
 
   const points = state.activeStroke.points;
   const last = points[points.length - 1];
-  const segmentDistance = last ? Math.hypot(last.x - hp.x, last.y - hp.y) : 0;
+  const paperX = hp.x - state.paperOffsetX;
+  const paperY = hp.y - state.paperOffsetY;
+  const segmentDistance = last ? Math.hypot(last.x - paperX, last.y - paperY) : 0;
   if (!last || force || segmentDistance > 0.6) {
     const lastDistance = last && Number.isFinite(last.d) ? last.d : 0;
     points.push({
-      x: hp.x,
-      y: hp.y,
+      x: paperX,
+      y: paperY,
       d: last ? lastDistance + segmentDistance : 0
     });
     state.traceRevision += 1;
@@ -1720,7 +1811,7 @@ canvas.addEventListener("pointerdown", (event) => {
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
   if (activePointers.size === 2) {
-    beginViewInteraction();
+    beginViewInteraction(true);
     // Second finger down - cancel any active draw/drag and enter pinch mode
     cancelViewAnimation();
     if (state.activeStroke && state.activeStroke.points.length < 2) {
@@ -1767,7 +1858,7 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
-  beginViewInteraction();
+  disableViewInteractionCache();
   state.dragging = true;
   state.view.dragMode = "pan";
   state.selectedHole = -1;
@@ -1807,8 +1898,8 @@ canvas.addEventListener("pointermove", (event) => {
   if (state.view.dragMode === "pan") {
     const dx = screenPoint.x - previousScreenX;
     const dy = screenPoint.y - previousScreenY;
-    state.view.panX += dx;
-    state.view.panY += dy;
+    state.paperOffsetX += dx / Math.max(0.0001, state.view.zoom);
+    state.paperOffsetY += dy / Math.max(0.0001, state.view.zoom);
     state.view.lastScreenX = screenPoint.x;
     state.view.lastScreenY = screenPoint.y;
     draw();
@@ -1855,9 +1946,6 @@ function stopDrag(event) {
   }
   state.activeStroke = null;
   state.selectedHole = -1;
-  if (previousDragMode === "pan") {
-    settleViewInteraction(80);
-  }
   if (event) {
     canvas.releasePointerCapture(event.pointerId);
   }
@@ -1878,7 +1966,7 @@ canvas.addEventListener("pointerleave", () => {
 });
 
 canvas.addEventListener("wheel", (event) => {
-  beginViewInteraction();
+  beginViewInteraction(true);
   cancelViewAnimation();
   event.preventDefault();
   flashZoomCursor(event.deltaY);
