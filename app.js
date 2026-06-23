@@ -233,6 +233,8 @@ let longPressStartX = 0;
 let longPressStartY = 0;
 let pendingTraceLayerRebuild = false;
 let pendingFillLayerRebuild = false;
+let renderWarmupTimer = 0;
+let renderWarmupIdleHandle = 0;
 
 const diagnostics = {
   enabled: false,
@@ -398,6 +400,47 @@ function flushDeferredLayerRebuilds() {
     rebuildFillLayer();
     pendingFillLayerRebuild = false;
   }
+}
+
+function cancelRenderWarmup() {
+  if (renderWarmupTimer) {
+    clearTimeout(renderWarmupTimer);
+    renderWarmupTimer = 0;
+  }
+  if (renderWarmupIdleHandle && "cancelIdleCallback" in window) {
+    window.cancelIdleCallback(renderWarmupIdleHandle);
+    renderWarmupIdleHandle = 0;
+  }
+}
+
+function runRenderWarmup() {
+  renderWarmupIdleHandle = 0;
+
+  if (state.dragging || state.view.dragMode || pendingLayoutFrame) {
+    return;
+  }
+
+  const { widthCss, heightCss } = getCanvasRasterMetrics();
+  if (widthCss < 20 || heightCss < 20) return;
+
+  rebuildTraceLayer();
+  pendingTraceLayerRebuild = false;
+  pendingFillLayerRebuild = false;
+}
+
+function scheduleRenderWarmup(delayMs = 180) {
+  cancelRenderWarmup();
+  renderWarmupTimer = setTimeout(() => {
+    renderWarmupTimer = 0;
+    const run = () => runRenderWarmup();
+
+    if ("requestIdleCallback" in window) {
+      renderWarmupIdleHandle = window.requestIdleCallback(run, { timeout: 220 });
+      return;
+    }
+
+    requestAnimationFrame(run);
+  }, delayMs);
 }
 
 function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY = 0) {
@@ -1867,6 +1910,7 @@ function syncLayoutGeometry(options = {}) {
     fitViewToContent();
   }
   draw();
+  scheduleRenderWarmup(220);
 }
 
 function scheduleLayoutGeometrySync(options = {}) {
@@ -2758,6 +2802,7 @@ canvas.addEventListener("contextmenu", (event) => {
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  cancelRenderWarmup();
   closeCanvasContextMenu();
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   beginLongPressTimer(event);
@@ -2916,6 +2961,7 @@ function stopDrag(event) {
   flushDeferredLayerRebuilds();
   updateCanvasCursor();
   draw();
+  scheduleRenderWarmup(140);
 }
 
 canvas.addEventListener("pointerup", stopDrag);
@@ -3278,6 +3324,7 @@ function init() {
   syncLayoutGeometry();
   fitViewToContent();
   draw();
+  scheduleRenderWarmup(120);
 
   if (showAboutOnStartup) {
     openAboutModal();
