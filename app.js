@@ -861,23 +861,30 @@ function fillViewSignature() {
   ].join("|");
 }
 
-function floodFillImageData(sourceData, targetData, width, height, startX, startY, fillRgb, tolerance = 14) {
-  if (startX < 0 || startX >= width || startY < 0 || startY >= height) return false;
+function floodFillImageData(sourceData, width, height, startX, startY, tolerance = 14, bounds = null) {
+  const activeBounds = bounds || {
+    minX: 0,
+    minY: 0,
+    maxX: width - 1,
+    maxY: height - 1
+  };
+  if (startX < activeBounds.minX || startX > activeBounds.maxX || startY < activeBounds.minY || startY > activeBounds.maxY) {
+    return {
+      changed: false,
+      mask: null,
+      minX: 0,
+      minY: 0,
+      maxX: -1,
+      maxY: -1,
+      touchedBounds: false
+    };
+  }
 
   const startIndex = (startY * width + startX) * 4;
   const tr = sourceData[startIndex];
   const tg = sourceData[startIndex + 1];
   const tb = sourceData[startIndex + 2];
   const ta = sourceData[startIndex + 3];
-
-  if (
-    Math.abs(tr - fillRgb.r) <= 2
-    && Math.abs(tg - fillRgb.g) <= 2
-    && Math.abs(tb - fillRgb.b) <= 2
-    && ta >= 250
-  ) {
-    return false;
-  }
 
   const alphaLoose = ta < 12;
   const matchTargetAt = (idx) => {
@@ -899,15 +906,21 @@ function floodFillImageData(sourceData, targetData, width, height, startX, start
   const stackY = [startY];
   let changed = false;
   let filledCount = 0;
-  const maxFillPixels = Math.max(1, Math.floor(width * height * 0.92));
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  let touchedBounds = false;
+  const boundsArea = Math.max(1, (activeBounds.maxX - activeBounds.minX + 1) * (activeBounds.maxY - activeBounds.minY + 1));
+  const maxFillPixels = Math.max(1, Math.floor(boundsArea * 0.92));
 
   while (stackX.length) {
     const x = stackX.pop();
     const y = stackY.pop();
-    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+    if (x < activeBounds.minX || x > activeBounds.maxX || y < activeBounds.minY || y > activeBounds.maxY) continue;
 
     let left = x;
-    while (left >= 0) {
+    while (left >= activeBounds.minX) {
       const pixel = y * width + left;
       const idx = pixel * 4;
       if (visited[pixel] || !matchTargetAt(idx)) break;
@@ -916,13 +929,16 @@ function floodFillImageData(sourceData, targetData, width, height, startX, start
     left += 1;
 
     let right = x;
-    while (right < width) {
+    while (right <= activeBounds.maxX) {
       const pixel = y * width + right;
       const idx = pixel * 4;
       if (visited[pixel] || !matchTargetAt(idx)) break;
       right += 1;
     }
     right -= 1;
+    if (left <= activeBounds.minX || right >= activeBounds.maxX || y <= activeBounds.minY || y >= activeBounds.maxY) {
+      touchedBounds = true;
+    }
 
     let spanAbove = false;
     let spanBelow = false;
@@ -933,22 +949,23 @@ function floodFillImageData(sourceData, targetData, width, height, startX, start
       const idx = pixel * 4;
       if (!matchTargetAt(idx)) continue;
 
-      visited[pixel] = 1;
-      targetData[idx] = fillRgb.r;
-      targetData[idx + 1] = fillRgb.g;
-      targetData[idx + 2] = fillRgb.b;
-      targetData[idx + 3] = 255;
+      visited[pixel] = 2;
       changed = true;
       filledCount += 1;
+      if (xi < minX) minX = xi;
+      if (y < minY) minY = y;
+      if (xi > maxX) maxX = xi;
+      if (y > maxY) maxY = y;
 
       if (filledCount >= maxFillPixels) {
-        return changed;
+        touchedBounds = true;
+        break;
       }
 
-      if (y > 0) {
+      if (y > activeBounds.minY) {
         const abovePixel = (y - 1) * width + xi;
         const aboveIdx = abovePixel * 4;
-        const aboveMatch = !visited[abovePixel] && matchTargetAt(aboveIdx);
+        const aboveMatch = visited[abovePixel] !== 2 && matchTargetAt(aboveIdx);
         if (aboveMatch && !spanAbove) {
           stackX.push(xi);
           stackY.push(y - 1);
@@ -958,10 +975,10 @@ function floodFillImageData(sourceData, targetData, width, height, startX, start
         }
       }
 
-      if (y < height - 1) {
+      if (y < activeBounds.maxY) {
         const belowPixel = (y + 1) * width + xi;
         const belowIdx = belowPixel * 4;
-        const belowMatch = !visited[belowPixel] && matchTargetAt(belowIdx);
+        const belowMatch = visited[belowPixel] !== 2 && matchTargetAt(belowIdx);
         if (belowMatch && !spanBelow) {
           stackX.push(xi);
           stackY.push(y + 1);
@@ -973,12 +990,21 @@ function floodFillImageData(sourceData, targetData, width, height, startX, start
     }
   }
 
-  return changed;
+  return {
+    changed,
+    mask: visited,
+    minX,
+    minY,
+    maxX,
+    maxY,
+    touchedBounds
+  };
 }
 
-function featherFillIntoEdge(sourceData, targetData, width, height, fillRgb) {
+function featherFillIntoEdge(sourceData, targetData, mask, width, height, patchX, patchY, patchW, patchH, fillRgb) {
   let touched = false;
   const idxAt = (x, y) => (y * width + x) * 4;
+  const patchIdxAt = (x, y) => ((y - patchY) * patchW + (x - patchX)) * 4;
   const neighbourOffsets = [
     [-1, 0],
     [1, 0],
@@ -991,29 +1017,32 @@ function featherFillIntoEdge(sourceData, targetData, width, height, fillRgb) {
   ];
 
   for (let pass = 0; pass < 2; pass += 1) {
-    for (let y = 1; y < height - 1; y += 1) {
-      for (let x = 1; x < width - 1; x += 1) {
-        const idx = idxAt(x, y);
-        if (targetData[idx + 3] > 0) continue;
+    for (let y = Math.max(1, patchY); y <= Math.min(height - 2, patchY + patchH - 1); y += 1) {
+      for (let x = Math.max(1, patchX); x <= Math.min(width - 2, patchX + patchW - 1); x += 1) {
+        const pIdx = patchIdxAt(x, y);
+        if (targetData[pIdx + 3] > 0) continue;
 
+        const idx = idxAt(x, y);
         const sourceAlpha = sourceData[idx + 3];
         if (sourceAlpha < 4 || sourceAlpha >= 255) continue;
 
         let hasFilledNeighbour = false;
         for (let i = 0; i < neighbourOffsets.length; i += 1) {
           const [ox, oy] = neighbourOffsets[i];
-          if (targetData[idxAt(x + ox, y + oy) + 3] > 0) {
+          const nPixel = (y + oy) * width + (x + ox);
+          if (mask[nPixel] === 2) {
             hasFilledNeighbour = true;
             break;
           }
         }
         if (!hasFilledNeighbour) continue;
 
-        targetData[idx] = fillRgb.r;
-        targetData[idx + 1] = fillRgb.g;
-        targetData[idx + 2] = fillRgb.b;
+        targetData[pIdx] = fillRgb.r;
+        targetData[pIdx + 1] = fillRgb.g;
+        targetData[pIdx + 2] = fillRgb.b;
         // Opaque underpaint prevents paper-colour sparkle through AA edges.
-        targetData[idx + 3] = 255;
+        targetData[pIdx + 3] = 255;
+        mask[y * width + x] = 2;
         touched = true;
       }
     }
@@ -1068,11 +1097,53 @@ function applyFillOperationToLayer(operation) {
   if (seedX < 0 || seedX >= fillLayer.widthPx || seedY < 0 || seedY >= fillLayer.heightPx) return;
 
   const workImage = workCtx.getImageData(0, 0, fillLayer.widthPx, fillLayer.heightPx);
-  const fillImage = fillLayer.ctx.getImageData(0, 0, fillLayer.widthPx, fillLayer.heightPx);
-  const changed = floodFillImageData(workImage.data, fillImage.data, fillLayer.widthPx, fillLayer.heightPx, seedX, seedY, rgb);
-  if (!changed) return;
-  featherFillIntoEdge(workImage.data, fillImage.data, fillLayer.widthPx, fillLayer.heightPx, rgb);
-  fillLayer.ctx.putImageData(fillImage, 0, 0);
+  const searchRadius = Math.max(220, Math.floor(Math.min(fillLayer.widthPx, fillLayer.heightPx) * 0.42));
+  const boundedSearch = {
+    minX: Math.max(0, seedX - searchRadius),
+    minY: Math.max(0, seedY - searchRadius),
+    maxX: Math.min(fillLayer.widthPx - 1, seedX + searchRadius),
+    maxY: Math.min(fillLayer.heightPx - 1, seedY + searchRadius)
+  };
+
+  let fillResult = floodFillImageData(workImage.data, fillLayer.widthPx, fillLayer.heightPx, seedX, seedY, 14, boundedSearch);
+  if (fillResult.changed && fillResult.touchedBounds) {
+    fillResult = floodFillImageData(workImage.data, fillLayer.widthPx, fillLayer.heightPx, seedX, seedY, 14, null);
+  }
+  if (!fillResult.changed || !fillResult.mask) return;
+
+  const pad = 3;
+  const patchX = Math.max(0, fillResult.minX - pad);
+  const patchY = Math.max(0, fillResult.minY - pad);
+  const patchMaxX = Math.min(fillLayer.widthPx - 1, fillResult.maxX + pad);
+  const patchMaxY = Math.min(fillLayer.heightPx - 1, fillResult.maxY + pad);
+  const patchW = patchMaxX - patchX + 1;
+  const patchH = patchMaxY - patchY + 1;
+
+  const fillPatch = fillLayer.ctx.getImageData(patchX, patchY, patchW, patchH);
+  for (let y = fillResult.minY; y <= fillResult.maxY; y += 1) {
+    for (let x = fillResult.minX; x <= fillResult.maxX; x += 1) {
+      if (fillResult.mask[y * fillLayer.widthPx + x] !== 2) continue;
+      const patchIdx = ((y - patchY) * patchW + (x - patchX)) * 4;
+      fillPatch.data[patchIdx] = rgb.r;
+      fillPatch.data[patchIdx + 1] = rgb.g;
+      fillPatch.data[patchIdx + 2] = rgb.b;
+      fillPatch.data[patchIdx + 3] = 255;
+    }
+  }
+
+  featherFillIntoEdge(
+    workImage.data,
+    fillPatch.data,
+    fillResult.mask,
+    fillLayer.widthPx,
+    fillLayer.heightPx,
+    patchX,
+    patchY,
+    patchW,
+    patchH,
+    rgb
+  );
+  fillLayer.ctx.putImageData(fillPatch, patchX, patchY);
 }
 
 function rebuildFillLayer() {
