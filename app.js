@@ -107,7 +107,10 @@ const controls = {
   closeExportBtn: document.getElementById("closeExportBtn"),
   exportIncludeGear: document.getElementById("exportIncludeGear"),
   exportTransparent: document.getElementById("exportTransparent"),
-  doExportBtn: document.getElementById("doExportBtn")
+  doExportBtn: document.getElementById("doExportBtn"),
+  rackRotateControl: document.getElementById("rackRotateControl"),
+  rackRotateSlider: document.getElementById("rackRotateSlider"),
+  rackRotateValue: document.getElementById("rackRotateValue")
 };
 
 const SHOW_ABOUT_ON_STARTUP_KEY = "showAboutOnStartup";
@@ -261,7 +264,9 @@ const traceLayer = {
   heightPx: 0,
   valid: false,
   revision: -1,
-  viewSignature: ""
+  viewSignature: "",
+  snapshotPaperOffsetX: 0,
+  snapshotPaperOffsetY: 0
 };
 
 function ensureDiagnosticsHud() {
@@ -357,9 +362,11 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
   if (canUseTraceLayer && ensureTraceLayerReady()) {
     const { widthCss, heightCss } = getCanvasRasterMetrics();
+    const paperDeltaX = (state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom;
+    const paperDeltaY = (state.paperOffsetY - traceLayer.snapshotPaperOffsetY) * state.view.zoom;
     ctx.save();
     ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, 0, 0, widthCss, heightCss);
+    ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, paperDeltaX, paperDeltaY, widthCss, heightCss);
     ctx.restore();
   } else {
     drawTrace();
@@ -625,9 +632,7 @@ function traceViewSignature() {
     state.centre.y.toFixed(3),
     state.view.zoom.toFixed(6),
     state.view.panX.toFixed(3),
-    state.view.panY.toFixed(3),
-    state.paperOffsetX.toFixed(3),
-    state.paperOffsetY.toFixed(3)
+    state.view.panY.toFixed(3)
   ].join("|");
 }
 
@@ -670,6 +675,8 @@ function rebuildTraceLayer() {
 
   traceLayer.revision = state.traceRevision;
   traceLayer.viewSignature = traceViewSignature();
+  traceLayer.snapshotPaperOffsetX = state.paperOffsetX;
+  traceLayer.snapshotPaperOffsetY = state.paperOffsetY;
   traceLayer.valid = true;
   return true;
 }
@@ -682,6 +689,13 @@ function ensureTraceLayerReady() {
     return rebuildTraceLayer();
   }
   if (traceLayer.viewSignature !== traceViewSignature()) {
+    return rebuildTraceLayer();
+  }
+  const { widthCss, heightCss } = getCanvasRasterMetrics();
+  const deltaScreenX = Math.abs((state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom);
+  const deltaScreenY = Math.abs((state.paperOffsetY - traceLayer.snapshotPaperOffsetY) * state.view.zoom);
+  const rebuildThreshold = Math.min(widthCss, heightCss) * 0.35;
+  if (deltaScreenX > rebuildThreshold || deltaScreenY > rebuildThreshold) {
     return rebuildTraceLayer();
   }
   return true;
@@ -924,6 +938,27 @@ function closeExportModal() {
 function syncGearToggleButton() {
   controls.toggleGear.innerHTML = state.showGear ? "HIDE<br>WHEELS" : "SHOW<br>WHEELS";
   controls.toggleGear.classList.toggle("is-off", !state.showGear);
+}
+
+function normaliseRackAngleDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+
+function updateRackRotationReadout(degrees) {
+  if (!controls.rackRotateValue) return;
+  controls.rackRotateValue.textContent = `${Math.round(normaliseRackAngleDegrees(degrees))} deg`;
+}
+
+function syncRackRotationControl() {
+  if (!controls.rackRotateControl || !controls.rackRotateSlider) return;
+  const show = isRackMode();
+  controls.rackRotateControl.classList.toggle("is-visible", show);
+  controls.rackRotateControl.setAttribute("aria-hidden", show ? "false" : "true");
+  if (!show) return;
+
+  const degrees = normaliseRackAngleDegrees((state.rackOrientationLocked * 180) / Math.PI);
+  controls.rackRotateSlider.value = String(Math.round(degrees));
+  updateRackRotationReadout(degrees);
 }
 
 function selectedPiece() {
@@ -2217,6 +2252,7 @@ document.querySelectorAll('input[name="ringPiece"]').forEach((radio) => {
     updateGeometryFromTeeth();
     rebuildHoles();
     refreshMeta();
+    syncRackRotationControl();
     fitViewToContent();
     draw();
   });
@@ -2270,6 +2306,15 @@ controls.strokeWidth.addEventListener("input", () => {
   state.strokeWidth = Number(controls.strokeWidth.value);
   draw();
 });
+
+if (controls.rackRotateSlider) {
+  controls.rackRotateSlider.addEventListener("input", () => {
+    const degrees = Number(controls.rackRotateSlider.value) || 0;
+    state.rackOrientationLocked = (normaliseRackAngleDegrees(degrees) * Math.PI) / 180;
+    updateRackRotationReadout(degrees);
+    draw();
+  });
+}
 
 controls.clearTrace.addEventListener("click", () => {
   state.strokes = [];
@@ -2486,6 +2531,7 @@ function init() {
   state.strokeWidth = Number(controls.strokeWidth.value);
   syncPenModeControls();
   syncGearToggleButton();
+  syncRackRotationControl();
 
   const showAboutOnStartup = getShowAboutOnStartupPreference();
   if (controls.showAboutOnStartup) {

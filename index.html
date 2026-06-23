@@ -107,6 +107,13 @@
 
       <section class="stage-wrap" aria-label="Drawing stage">
         <canvas id="stage" width="1100" height="760"></canvas>
+        <div id="rackRotateControl" class="rack-rotate-control" aria-hidden="true">
+          <label for="rackRotateSlider" class="rack-rotate-label">
+            Obround angle
+            <span id="rackRotateValue" class="rack-rotate-value">0 deg</span>
+          </label>
+          <input id="rackRotateSlider" type="range" min="0" max="359" step="1" value="0" />
+        </div>
       </section>
     </main>
 

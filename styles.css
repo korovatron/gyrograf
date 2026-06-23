@@ -330,6 +330,7 @@ button.is-off {
 }
 
 .stage-wrap {
+  position: relative;
   min-height: 0;
   height: 100%;
   border-radius: 0;
@@ -344,6 +345,57 @@ canvas {
   height: 100%;
   display: block;
   touch-action: none;
+}
+
+.rack-rotate-control {
+  position: absolute;
+  right: max(14px, calc(var(--safe-area-right, 0px) + 8px));
+  bottom: max(14px, calc(var(--safe-area-bottom, 0px) + 8px));
+  width: min(280px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(26, 47, 66, 0.88);
+  color: #e8f4fd;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+  display: none;
+  z-index: 15;
+}
+
+.rack-rotate-control.is-visible {
+  display: block;
+}
+
+.rack-rotate-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e8f4fd;
+}
+
+.rack-rotate-value {
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+#rackRotateSlider {
+  width: 100%;
+  accent-color: #ffd700;
+}
+
+@media (max-width: 980px) {
+  .rack-rotate-control {
+    width: min(300px, calc(100vw - 20px));
+    right: max(10px, calc(var(--safe-area-right, 0px) + 6px));
+    bottom: max(10px, calc(var(--safe-area-bottom, 0px) + 6px));
+  }
 }
 
 .perf-hud {
