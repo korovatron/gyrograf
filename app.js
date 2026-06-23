@@ -231,6 +231,8 @@ let longPressTimer = 0;
 let longPressPointerId = null;
 let longPressStartX = 0;
 let longPressStartY = 0;
+let pendingTraceLayerRebuild = false;
+let pendingFillLayerRebuild = false;
 
 const diagnostics = {
   enabled: false,
@@ -386,6 +388,17 @@ function stopDiagnosticsLoop() {
   }
 }
 
+function flushDeferredLayerRebuilds() {
+  if (pendingTraceLayerRebuild) {
+    rebuildTraceLayer();
+    pendingTraceLayerRebuild = false;
+  }
+  if (pendingFillLayerRebuild) {
+    rebuildFillLayer();
+    pendingFillLayerRebuild = false;
+  }
+}
+
 function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY = 0) {
   ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   ctx.translate(
@@ -396,6 +409,8 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   ctx.translate(-state.centre.x, -state.centre.y);
 
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
+  drawFillLayer(scaleX, scaleY, viewportOffsetX, viewportOffsetY);
+
   if (canUseTraceLayer && ensureTraceLayerReady()) {
     const { widthCss, heightCss } = getCanvasRasterMetrics();
     const paperDeltaX = (state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom;
@@ -409,7 +424,6 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
     ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, destX, destY, destW, destH);
     ctx.restore();
   } else {
-    drawFillLayer(scaleX, scaleY, viewportOffsetX, viewportOffsetY);
     drawTrace();
   }
 
@@ -719,7 +733,6 @@ function rebuildTraceLayer() {
 
   const previousCtx = ctx;
   ctx = tctx;
-  drawFillLayer(cacheScaleX, cacheScaleY, marginX, marginY);
   drawTrace();
   ctx = previousCtx;
 
@@ -798,13 +811,27 @@ function appendLatestStrokeSegmentToTraceLayer(stroke) {
 }
 
 function ensureTraceLayerReady() {
+  const hasRenderableTrace = !!traceLayer.canvas && traceLayer.widthPx > 0 && traceLayer.heightPx > 0;
+
   if (!traceLayer.valid) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingTraceLayerRebuild = true;
+      return hasRenderableTrace;
+    }
     return rebuildTraceLayer();
   }
   if (traceLayer.revision !== state.traceRevision) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingTraceLayerRebuild = true;
+      return hasRenderableTrace;
+    }
     return rebuildTraceLayer();
   }
   if (traceLayer.viewSignature !== traceViewSignature()) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingTraceLayerRebuild = true;
+      return hasRenderableTrace;
+    }
     return rebuildTraceLayer();
   }
   const deltaScreenX = Math.abs((state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom);
@@ -812,6 +839,10 @@ function ensureTraceLayerReady() {
   const availableMarginX = Math.max(8, (traceLayer.snapshotOffsetX || 0) - 2);
   const availableMarginY = Math.max(8, (traceLayer.snapshotOffsetY || 0) - 2);
   if (deltaScreenX > availableMarginX || deltaScreenY > availableMarginY) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingTraceLayerRebuild = true;
+      return true;
+    }
     return rebuildTraceLayer();
   }
   return true;
@@ -1182,10 +1213,20 @@ function rebuildFillLayer() {
 }
 
 function ensureFillLayerReady() {
+  const hasRenderableFill = !!fillLayer.canvas && fillLayer.widthPx > 0 && fillLayer.heightPx > 0;
+
   if (!fillLayer.valid) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingFillLayerRebuild = true;
+      return hasRenderableFill;
+    }
     return rebuildFillLayer();
   }
   if (fillLayer.viewSignature !== fillViewSignature()) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingFillLayerRebuild = true;
+      return hasRenderableFill;
+    }
     return rebuildFillLayer();
   }
 
@@ -1194,6 +1235,10 @@ function ensureFillLayerReady() {
   const availableMarginX = Math.max(8, (fillLayer.snapshotOffsetX || 0) - 2);
   const availableMarginY = Math.max(8, (fillLayer.snapshotOffsetY || 0) - 2);
   if (deltaScreenX > availableMarginX || deltaScreenY > availableMarginY) {
+    if (state.dragging && state.view.dragMode === "pan") {
+      pendingFillLayerRebuild = true;
+      return fillLayer.valid;
+    }
     return rebuildFillLayer();
   }
 
@@ -2849,6 +2894,7 @@ function stopDrag(event) {
   if (event) {
     canvas.releasePointerCapture(event.pointerId);
   }
+  flushDeferredLayerRebuilds();
   updateCanvasCursor();
   draw();
 }
