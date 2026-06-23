@@ -77,7 +77,7 @@ const WHEEL_HOLE_MAP = {
   84: 35
 };
 
-const GEAR_FILL_COLOR = "rgba(196, 214, 231, 0.38)";
+const GEAR_FILL_COLOR = "rgba(196, 214, 231, 0.58)";
 const GEAR_STROKE_COLOR = "#6E8092";
 const HOLE_STROKE_COLOR = "#6F7D8D";
 
@@ -678,7 +678,42 @@ async function shareOrDownloadFile(filename, blob) {
 function exportCurrentViewAsPng(options = {}) {
   const { includeGear = true, transparent = false } = options;
   const previousShowGear = state.showGear;
+  const previousZoom = state.view.zoom;
+  const previousPanX = state.view.panX;
+  const previousPanY = state.view.panY;
+  const originalCanvasWidth = canvas.width;
+  const originalCanvasHeight = canvas.height;
   state.showGear = includeGear;
+
+  // Export should frame all content, even when distant from the rig centre.
+  const bounds = getContentBounds();
+  const viewport = canvas.parentElement.getBoundingClientRect();
+  const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+  const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+  const padding = 0.08;
+  const exportZoom = Math.max(
+    0.0001,
+    Math.min(
+      state.view.maxZoom,
+      Math.min(
+        (viewport.width * (1 - padding)) / contentWidth,
+        (viewport.height * (1 - padding)) / contentHeight
+      )
+    )
+  );
+  const contentCenterX = (bounds.minX + bounds.maxX) * 0.5;
+  const contentCenterY = (bounds.minY + bounds.maxY) * 0.5;
+  state.view.zoom = exportZoom;
+  state.view.panX = -(contentCenterX - state.centre.x) * exportZoom;
+  state.view.panY = -(contentCenterY - state.centre.y) * exportZoom;
+
+  const exportScale = 2;
+
+  // Supersample export rendering so zoomed-out views still export with good detail.
+  canvas.width = Math.max(1, Math.round(originalCanvasWidth * exportScale));
+  canvas.height = Math.max(1, Math.round(originalCanvasHeight * exportScale));
+  traceLayer.valid = false;
+  viewInteractionCache.valid = false;
   draw(!transparent);
 
   try {
@@ -753,6 +788,13 @@ function exportCurrentViewAsPng(options = {}) {
       await shareOrDownloadFile(`gyrograf-diagram-${getTimestampSlug()}.png`, blob);
     }, "image/png");
   } finally {
+    canvas.width = originalCanvasWidth;
+    canvas.height = originalCanvasHeight;
+    traceLayer.valid = false;
+    viewInteractionCache.valid = false;
+    state.view.zoom = previousZoom;
+    state.view.panX = previousPanX;
+    state.view.panY = previousPanY;
     state.showGear = previousShowGear;
     draw();
   }
@@ -998,11 +1040,10 @@ function applyViewportTransform() {
 }
 
 function setZoomAt(clientX, clientY, nextZoom) {
-  const screen = canvasPointFromClient(clientX, clientY);
-  const world = screenToWorld(clientX, clientY);
   state.view.zoom = Math.max(state.view.minZoom, Math.min(state.view.maxZoom, nextZoom));
-  state.view.panX = screen.x - state.centre.x - (world.x - state.centre.x) * state.view.zoom;
-  state.view.panY = screen.y - state.centre.y - (world.y - state.centre.y) * state.view.zoom;
+  // Rig stays anchored at centre; zoom does not introduce view translation.
+  state.view.panX = 0;
+  state.view.panY = 0;
 }
 
 function cancelViewAnimation() {
@@ -1637,6 +1678,42 @@ function getContentBounds() {
   return bounds;
 }
 
+function getRigBounds() {
+  if (isRackMode()) {
+    const ringDepth = currentRingToothDepth();
+    const wheelDepth = currentWheelToothDepth();
+    const wheelRadius = state.smallRadius + wheelDepth;
+    const envelope = ringDepth + wheelRadius;
+    const straight = rackStraightLength();
+    const radius = rackEndRadius();
+    const orientation = rackOrientationAngle();
+    const horizontalHalfWidth = straight * 0.5 + radius;
+    const horizontalHalfHeight = radius;
+    const isVertical = Math.abs(Math.sin(orientation)) > 0.5;
+    const halfWidth = isVertical ? horizontalHalfHeight : horizontalHalfWidth;
+    const halfHeight = isVertical ? horizontalHalfWidth : horizontalHalfHeight;
+    return {
+      minX: state.centre.x - halfWidth - envelope,
+      minY: state.centre.y - halfHeight - envelope,
+      maxX: state.centre.x + halfWidth + envelope,
+      maxY: state.centre.y + halfHeight + envelope
+    };
+  }
+
+  const ringDepth = currentRingToothDepth();
+  const wheelDepth = currentWheelToothDepth();
+  const ringRadius = state.ringOuterRadius + ringDepth;
+  const wheelRadius = state.smallRadius + wheelDepth;
+  const orbitRadius = currentDistance() + wheelRadius;
+  const envelopeRadius = Math.max(ringRadius, orbitRadius);
+  return {
+    minX: state.centre.x - envelopeRadius,
+    minY: state.centre.y - envelopeRadius,
+    maxX: state.centre.x + envelopeRadius,
+    maxY: state.centre.y + envelopeRadius
+  };
+}
+
 function fitViewToContent(animate = false) {
   const bounds = getContentBounds();
   const viewport = canvas.parentElement.getBoundingClientRect();
@@ -1656,11 +1733,8 @@ function fitViewToContent(animate = false) {
       )
     )
   );
-  const centerX = (bounds.minX + bounds.maxX) / 2;
-  const centerY = (bounds.minY + bounds.maxY) / 2;
-  const visibleCenterOffsetX = occludedLeftWidth * 0.5;
-  const targetPanX = -(centerX - state.centre.x) * targetZoom + visibleCenterOffsetX;
-  const targetPanY = -(centerY - state.centre.y) * targetZoom;
+  const targetPanX = 0;
+  const targetPanY = 0;
 
   if (!animate) {
     cancelViewAnimation();
@@ -1685,6 +1759,69 @@ function fitViewToContent(animate = false) {
     state.view.zoom = startZoom + (targetZoom - startZoom) * eased;
     state.view.panX = startPanX + (targetPanX - startPanX) * eased;
     state.view.panY = startPanY + (targetPanY - startPanY) * eased;
+    draw();
+    if (progress < 1) {
+      state.view.animationFrame = requestAnimationFrame(tick);
+    } else {
+      state.view.animationFrame = 0;
+      settleViewInteraction(40);
+    }
+  };
+
+  state.view.animationFrame = requestAnimationFrame(tick);
+}
+
+function zoomFitToContent(animate = false) {
+  const bounds = getRigBounds();
+  const viewport = canvas.parentElement.getBoundingClientRect();
+  const panelBounds = controlPanel.getBoundingClientRect();
+  const occludedLeftWidth = !narrowMedia.matches && state.panelOpen ? panelBounds.width : 0;
+  const visibleLeft = occludedLeftWidth;
+  const visibleRight = viewport.width;
+  const visibleTop = 0;
+  const visibleBottom = viewport.height;
+  const anchorX = state.centre.x;
+  const anchorY = state.centre.y;
+  const dxLeft = Math.max(0, state.centre.x - bounds.minX);
+  const dxRight = Math.max(0, bounds.maxX - state.centre.x);
+  const dyTop = Math.max(0, state.centre.y - bounds.minY);
+  const dyBottom = Math.max(0, bounds.maxY - state.centre.y);
+  const padding = 0.12;
+
+  const zoomLimits = [state.view.maxZoom];
+  if (dxLeft > 0) zoomLimits.push((anchorX - visibleLeft) * (1 - padding) / dxLeft);
+  if (dxRight > 0) zoomLimits.push((visibleRight - anchorX) * (1 - padding) / dxRight);
+  if (dyTop > 0) zoomLimits.push((anchorY - visibleTop) * (1 - padding) / dyTop);
+  if (dyBottom > 0) zoomLimits.push((visibleBottom - anchorY) * (1 - padding) / dyBottom);
+
+  const targetZoom = Math.max(
+    state.view.minZoom,
+    Math.min(...zoomLimits.filter((value) => Number.isFinite(value) && value > 0))
+  );
+
+  if (!animate) {
+    cancelViewAnimation();
+    state.view.zoom = targetZoom;
+    state.view.panX = 0;
+    state.view.panY = 0;
+    return;
+  }
+
+  cancelViewAnimation();
+  beginViewInteraction(false);
+  const startZoom = state.view.zoom;
+  const startPanX = state.view.panX;
+  const startPanY = state.view.panY;
+  const duration = 320;
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+  const startTime = performance.now();
+
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startTime) / duration);
+    const eased = easeOutCubic(progress);
+    state.view.zoom = startZoom + (targetZoom - startZoom) * eased;
+    state.view.panX = startPanX + (0 - startPanX) * eased;
+    state.view.panY = startPanY + (0 - startPanY) * eased;
     draw();
     if (progress < 1) {
       state.view.animationFrame = requestAnimationFrame(tick);
@@ -2058,7 +2195,7 @@ controls.toggleGear.addEventListener("click", () => {
 });
 
 controls.resetView.addEventListener("click", () => {
-  fitViewToContent(true);
+  zoomFitToContent(true);
   draw();
 });
 
