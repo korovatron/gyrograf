@@ -75,7 +75,7 @@ body {
 }
 
 .layout.panel-hidden .panel {
-  transform: translateX(calc(-1 * var(--panel-w)));
+  transform: translateX(-100%);
 }
 
 .panel-inner {
