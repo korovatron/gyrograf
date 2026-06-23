@@ -214,6 +214,11 @@ const state = {
 
 let pendingLayoutFrame = 0;
 let cursorResetTimer = 0;
+let paperGridFlashTimer = 0;
+let keyboardPanRafId = 0;
+const pressedPanKeys = new Set();
+let keyboardZoomRafId = 0;
+let keyboardZoomDirection = 0;
 
 const diagnostics = {
   enabled: false,
@@ -479,6 +484,10 @@ function settleViewInteraction(delayMs = 120) {
 }
 
 function disableViewInteractionCache() {
+  if (paperGridFlashTimer) {
+    clearTimeout(paperGridFlashTimer);
+    paperGridFlashTimer = 0;
+  }
   if (viewInteractionCache.settleTimer) {
     clearTimeout(viewInteractionCache.settleTimer);
     viewInteractionCache.settleTimer = 0;
@@ -486,6 +495,87 @@ function disableViewInteractionCache() {
   viewInteractionCache.active = false;
   viewInteractionCache.valid = false;
   viewInteractionCache.showPaperGrid = false;
+}
+
+function pulsePaperGrid(durationMs = 140) {
+  viewInteractionCache.showPaperGrid = true;
+  if (paperGridFlashTimer) {
+    clearTimeout(paperGridFlashTimer);
+  }
+  paperGridFlashTimer = setTimeout(() => {
+    paperGridFlashTimer = 0;
+    if (!viewInteractionCache.active) {
+      viewInteractionCache.showPaperGrid = false;
+      draw();
+    }
+  }, durationMs);
+}
+
+function applyKeyboardPanStep() {
+  if (!pressedPanKeys.size) return;
+
+  const panStepScreenPx = 14;
+  const panStepWorld = panStepScreenPx / Math.max(0.0001, state.view.zoom);
+  if (pressedPanKeys.has("ArrowLeft")) state.paperOffsetX -= panStepWorld;
+  if (pressedPanKeys.has("ArrowRight")) state.paperOffsetX += panStepWorld;
+  if (pressedPanKeys.has("ArrowUp")) state.paperOffsetY -= panStepWorld;
+  if (pressedPanKeys.has("ArrowDown")) state.paperOffsetY += panStepWorld;
+  draw();
+}
+
+function startKeyboardPanLoop() {
+  if (keyboardPanRafId) return;
+  viewInteractionCache.showPaperGrid = true;
+  const tick = () => {
+    if (!pressedPanKeys.size) {
+      keyboardPanRafId = 0;
+      viewInteractionCache.showPaperGrid = false;
+      draw();
+      return;
+    }
+    applyKeyboardPanStep();
+    keyboardPanRafId = requestAnimationFrame(tick);
+  };
+  keyboardPanRafId = requestAnimationFrame(tick);
+}
+
+function stopKeyboardPanLoopIfIdle() {
+  if (pressedPanKeys.size || !keyboardPanRafId) return;
+  cancelAnimationFrame(keyboardPanRafId);
+  keyboardPanRafId = 0;
+  viewInteractionCache.showPaperGrid = false;
+  draw();
+}
+
+function applyKeyboardZoomStep() {
+  if (!keyboardZoomDirection) return;
+  const zoomFactor = keyboardZoomDirection > 0 ? 1.02 : 1 / 1.02;
+  setZoomAt(state.centre.x, state.centre.y, state.view.zoom * zoomFactor);
+  draw();
+}
+
+function startKeyboardZoomLoop(direction) {
+  keyboardZoomDirection = direction;
+  beginViewInteraction(true);
+  cancelViewAnimation();
+  if (keyboardZoomRafId) return;
+  const tick = () => {
+    if (!keyboardZoomDirection) {
+      keyboardZoomRafId = 0;
+      settleViewInteraction(150);
+      return;
+    }
+    applyKeyboardZoomStep();
+    keyboardZoomRafId = requestAnimationFrame(tick);
+  };
+  keyboardZoomRafId = requestAnimationFrame(tick);
+}
+
+function stopKeyboardZoomLoop() {
+  keyboardZoomDirection = 0;
+  if (!keyboardZoomRafId) {
+    settleViewInteraction(150);
+  }
 }
 
 function shouldShowPaperGrid() {
@@ -2257,6 +2347,14 @@ controls.doExportBtn.addEventListener("click", () => {
 syncExportActionLabels();
 
 document.addEventListener("keydown", (event) => {
+  const targetElement = event.target;
+  const targetTag = targetElement?.tagName?.toLowerCase?.() || "";
+  const isFormTarget =
+    targetTag === "input"
+    || targetTag === "textarea"
+    || targetTag === "select"
+    || targetElement?.isContentEditable;
+
   if (event.shiftKey && event.key.toLowerCase() === "d") {
     diagnostics.enabled = !diagnostics.enabled;
     if (diagnostics.enabled) {
@@ -2270,6 +2368,32 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (isFormTarget) return;
+
+  const key = event.key;
+
+  const isArrowLeft = key === "ArrowLeft" || key === "Left";
+  const isArrowRight = key === "ArrowRight" || key === "Right";
+  const isArrowUp = key === "ArrowUp" || key === "Up";
+  const isArrowDown = key === "ArrowDown" || key === "Down";
+  if (isArrowLeft || isArrowRight || isArrowUp || isArrowDown) {
+    event.preventDefault();
+    if (isArrowLeft) pressedPanKeys.add("ArrowLeft");
+    if (isArrowRight) pressedPanKeys.add("ArrowRight");
+    if (isArrowUp) pressedPanKeys.add("ArrowUp");
+    if (isArrowDown) pressedPanKeys.add("ArrowDown");
+    startKeyboardPanLoop();
+    return;
+  }
+
+  const isZoomInKey = key === "+" || key === "=" || key === "NumpadAdd";
+  const isZoomOutKey = key === "-" || key === "_" || key === "NumpadSubtract";
+  if (isZoomInKey || isZoomOutKey) {
+    event.preventDefault();
+    startKeyboardZoomLoop(isZoomInKey ? 1 : -1);
+    return;
+  }
+
   if (event.key !== "Escape") return;
 
   if (controls.helpOverlay.classList.contains("show")) {
@@ -2280,6 +2404,24 @@ document.addEventListener("keydown", (event) => {
   if (controls.aboutOverlay.classList.contains("show")) {
     closeAboutModal();
   }
+});
+
+document.addEventListener("keyup", (event) => {
+  const key = event.key;
+  if (key === "ArrowLeft" || key === "Left") pressedPanKeys.delete("ArrowLeft");
+  if (key === "ArrowRight" || key === "Right") pressedPanKeys.delete("ArrowRight");
+  if (key === "ArrowUp" || key === "Up") pressedPanKeys.delete("ArrowUp");
+  if (key === "ArrowDown" || key === "Down") pressedPanKeys.delete("ArrowDown");
+  if (key === "+" || key === "=" || key === "NumpadAdd" || key === "-" || key === "_" || key === "NumpadSubtract") {
+    stopKeyboardZoomLoop();
+  }
+  stopKeyboardPanLoopIfIdle();
+});
+
+window.addEventListener("blur", () => {
+  pressedPanKeys.clear();
+  stopKeyboardZoomLoop();
+  stopKeyboardPanLoopIfIdle();
 });
 
 window.addEventListener("resize", () => {
