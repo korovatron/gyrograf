@@ -946,7 +946,8 @@ function fillViewSignature() {
     canvas.width,
     canvas.height,
     state.centre.x.toFixed(3),
-    state.centre.y.toFixed(3)
+    state.centre.y.toFixed(3),
+    state.view.zoom.toFixed(6)
   ].join("|");
 }
 
