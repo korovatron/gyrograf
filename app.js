@@ -262,6 +262,7 @@ const viewInteractionCache = {
   snapshotPanY: 0,
   snapshotPaperOffsetX: 0,
   snapshotPaperOffsetY: 0,
+  snapshotTimestamp: 0,
   valid: false,
   active: false,
   showPaperGrid: false,
@@ -409,8 +410,6 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   ctx.translate(-state.centre.x, -state.centre.y);
 
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
-  drawFillLayer(scaleX, scaleY, viewportOffsetX, viewportOffsetY);
-
   if (canUseTraceLayer && ensureTraceLayerReady()) {
     const { widthCss, heightCss } = getCanvasRasterMetrics();
     const paperDeltaX = (state.paperOffsetX - traceLayer.snapshotPaperOffsetX) * state.view.zoom;
@@ -424,6 +423,7 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
     ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, destX, destY, destW, destH);
     ctx.restore();
   } else {
+    drawFillLayer(scaleX, scaleY, viewportOffsetX, viewportOffsetY);
     drawTrace();
   }
 
@@ -517,7 +517,21 @@ function captureViewInteractionSnapshot() {
   viewInteractionCache.snapshotPanY = state.view.panY;
   viewInteractionCache.snapshotPaperOffsetX = state.paperOffsetX;
   viewInteractionCache.snapshotPaperOffsetY = state.paperOffsetY;
+  viewInteractionCache.snapshotTimestamp = performance.now();
   viewInteractionCache.valid = true;
+}
+
+function shouldRefreshInteractionSnapshot() {
+  if (!viewInteractionCache.active || !viewInteractionCache.valid) return false;
+
+  const snapshotZoom = viewInteractionCache.snapshotZoom || 1;
+  const zoomScale = state.view.zoom / snapshotZoom;
+  if (zoomScale > 1.22 || zoomScale < 0.82) return true;
+
+  const ageMs = performance.now() - (viewInteractionCache.snapshotTimestamp || 0);
+  if (ageMs > 320) return true;
+
+  return false;
 }
 
 function beginViewInteraction(showPaperGrid = false) {
@@ -733,6 +747,7 @@ function rebuildTraceLayer() {
 
   const previousCtx = ctx;
   ctx = tctx;
+  drawFillLayer(cacheScaleX, cacheScaleY, marginX, marginY);
   drawTrace();
   ctx = previousCtx;
 
@@ -2302,6 +2317,10 @@ function draw(fillBackground = true) {
     if (shouldShowPaperGrid()) {
       drawPaperGrid(widthCss, heightCss);
     }
+  }
+
+  if (shouldRefreshInteractionSnapshot()) {
+    captureViewInteractionSnapshot();
   }
 
   if (canUseViewInteractionCache(fillBackground)) {
