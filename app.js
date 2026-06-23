@@ -89,6 +89,7 @@ const controls = {
   inkColourLabel: document.getElementById("inkColourLabel"),
   inkColour: document.getElementById("inkColour"),
   paperColour: document.getElementById("paperColour"),
+  fillColour: document.getElementById("fillColour"),
   strokeWidth: document.getElementById("strokeWidth"),
   clearTrace: document.getElementById("clearTrace"),
   toggleGear: document.getElementById("toggleGear"),
@@ -110,7 +111,9 @@ const controls = {
   doExportBtn: document.getElementById("doExportBtn"),
   rackRotateControl: document.getElementById("rackRotateControl"),
   rackRotateSlider: document.getElementById("rackRotateSlider"),
-  rackRotateValue: document.getElementById("rackRotateValue")
+  rackRotateValue: document.getElementById("rackRotateValue"),
+  canvasContextMenu: document.getElementById("canvasContextMenu"),
+  fillFromPointAction: document.getElementById("fillFromPointAction")
 };
 
 const SHOW_ABOUT_ON_STARTUP_KEY = "showAboutOnStartup";
@@ -195,6 +198,7 @@ const state = {
   penMode: "solid",
   inkColour: "#ff0000",
   paperColour: "#ffffff",
+  fillColour: "#00b894",
   strokeWidth: 2,
   traceRevision: 0,
   holes: [],
@@ -222,6 +226,11 @@ let keyboardPanRafId = 0;
 const pressedPanKeys = new Set();
 let keyboardZoomRafId = 0;
 let keyboardZoomDirection = 0;
+let pendingFillMenuWorldPoint = null;
+let longPressTimer = 0;
+let longPressPointerId = null;
+let longPressStartX = 0;
+let longPressStartY = 0;
 
 const diagnostics = {
   enabled: false,
@@ -272,6 +281,28 @@ const traceLayer = {
   viewSignature: "",
   snapshotPaperOffsetX: 0,
   snapshotPaperOffsetY: 0
+};
+
+const fillLayer = {
+  canvas: null,
+  ctx: null,
+  workCanvas: null,
+  workCtx: null,
+  overscanFactor: 1.8,
+  widthPx: 0,
+  heightPx: 0,
+  snapshotWidth: 0,
+  snapshotHeight: 0,
+  snapshotOffsetX: 0,
+  snapshotOffsetY: 0,
+  snapshotZoom: 1,
+  snapshotPanX: 0,
+  snapshotPanY: 0,
+  snapshotPaperOffsetX: 0,
+  snapshotPaperOffsetY: 0,
+  viewSignature: "",
+  operations: [],
+  valid: false
 };
 
 function ensureDiagnosticsHud() {
@@ -363,6 +394,8 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   );
   ctx.scale(state.view.zoom, state.view.zoom);
   ctx.translate(-state.centre.x, -state.centre.y);
+
+  drawFillLayer();
 
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
   if (canUseTraceLayer && ensureTraceLayerReady()) {
@@ -784,6 +817,303 @@ function ensureTraceLayerReady() {
   return true;
 }
 
+function ensureFillLayerSurface(targetW, targetH) {
+  if (!targetW || !targetH) return null;
+
+  if (!fillLayer.canvas) {
+    fillLayer.canvas = document.createElement("canvas");
+    fillLayer.ctx = fillLayer.canvas.getContext("2d", { willReadFrequently: true });
+  }
+
+  if (fillLayer.widthPx !== targetW || fillLayer.heightPx !== targetH) {
+    fillLayer.canvas.width = targetW;
+    fillLayer.canvas.height = targetH;
+    fillLayer.widthPx = targetW;
+    fillLayer.heightPx = targetH;
+    fillLayer.valid = false;
+  }
+
+  return fillLayer.ctx;
+}
+
+function ensureFillWorkSurface(targetW, targetH) {
+  if (!targetW || !targetH) return null;
+
+  if (!fillLayer.workCanvas) {
+    fillLayer.workCanvas = document.createElement("canvas");
+    fillLayer.workCtx = fillLayer.workCanvas.getContext("2d", { willReadFrequently: true });
+  }
+
+  if (fillLayer.workCanvas.width !== targetW || fillLayer.workCanvas.height !== targetH) {
+    fillLayer.workCanvas.width = targetW;
+    fillLayer.workCanvas.height = targetH;
+  }
+
+  return fillLayer.workCtx;
+}
+
+function fillViewSignature() {
+  return traceViewSignature();
+}
+
+function floodFillImageData(sourceData, targetData, width, height, startX, startY, fillRgb, tolerance = 14) {
+  if (startX < 0 || startX >= width || startY < 0 || startY >= height) return false;
+
+  const startIndex = (startY * width + startX) * 4;
+  const tr = sourceData[startIndex];
+  const tg = sourceData[startIndex + 1];
+  const tb = sourceData[startIndex + 2];
+  const ta = sourceData[startIndex + 3];
+
+  if (
+    Math.abs(tr - fillRgb.r) <= 2
+    && Math.abs(tg - fillRgb.g) <= 2
+    && Math.abs(tb - fillRgb.b) <= 2
+    && ta >= 250
+  ) {
+    return false;
+  }
+
+  const alphaLoose = ta < 12;
+  const matchTargetAt = (idx) => {
+    const a = sourceData[idx + 3];
+    if (alphaLoose) {
+      return a < 18;
+    }
+    if (a < 12) return false;
+    return (
+      Math.abs(sourceData[idx] - tr) <= tolerance
+      && Math.abs(sourceData[idx + 1] - tg) <= tolerance
+      && Math.abs(sourceData[idx + 2] - tb) <= tolerance
+      && Math.abs(a - ta) <= 24
+    );
+  };
+
+  const visited = new Uint8Array(width * height);
+  const stackX = [startX];
+  const stackY = [startY];
+  let changed = false;
+  let filledCount = 0;
+  const maxFillPixels = Math.max(1, Math.floor(width * height * 0.92));
+
+  while (stackX.length) {
+    const x = stackX.pop();
+    const y = stackY.pop();
+    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+
+    let left = x;
+    while (left >= 0) {
+      const pixel = y * width + left;
+      const idx = pixel * 4;
+      if (visited[pixel] || !matchTargetAt(idx)) break;
+      left -= 1;
+    }
+    left += 1;
+
+    let right = x;
+    while (right < width) {
+      const pixel = y * width + right;
+      const idx = pixel * 4;
+      if (visited[pixel] || !matchTargetAt(idx)) break;
+      right += 1;
+    }
+    right -= 1;
+
+    let spanAbove = false;
+    let spanBelow = false;
+
+    for (let xi = left; xi <= right; xi += 1) {
+      const pixel = y * width + xi;
+      if (visited[pixel]) continue;
+      const idx = pixel * 4;
+      if (!matchTargetAt(idx)) continue;
+
+      visited[pixel] = 1;
+      targetData[idx] = fillRgb.r;
+      targetData[idx + 1] = fillRgb.g;
+      targetData[idx + 2] = fillRgb.b;
+      targetData[idx + 3] = 255;
+      changed = true;
+      filledCount += 1;
+
+      if (filledCount >= maxFillPixels) {
+        return changed;
+      }
+
+      if (y > 0) {
+        const abovePixel = (y - 1) * width + xi;
+        const aboveIdx = abovePixel * 4;
+        const aboveMatch = !visited[abovePixel] && matchTargetAt(aboveIdx);
+        if (aboveMatch && !spanAbove) {
+          stackX.push(xi);
+          stackY.push(y - 1);
+          spanAbove = true;
+        } else if (!aboveMatch) {
+          spanAbove = false;
+        }
+      }
+
+      if (y < height - 1) {
+        const belowPixel = (y + 1) * width + xi;
+        const belowIdx = belowPixel * 4;
+        const belowMatch = !visited[belowPixel] && matchTargetAt(belowIdx);
+        if (belowMatch && !spanBelow) {
+          stackX.push(xi);
+          stackY.push(y + 1);
+          spanBelow = true;
+        } else if (!belowMatch) {
+          spanBelow = false;
+        }
+      }
+    }
+  }
+
+  return changed;
+}
+
+function applyFillOperationToLayer(operation) {
+  if (!fillLayer.ctx || !fillLayer.widthPx || !fillLayer.heightPx) return;
+  const rgb = hexToRgb(operation.colour);
+  if (!rgb) return;
+
+  const workCtx = ensureFillWorkSurface(fillLayer.widthPx, fillLayer.heightPx);
+  if (!workCtx) return;
+
+  workCtx.setTransform(1, 0, 0, 1, 0, 0);
+  workCtx.clearRect(0, 0, fillLayer.widthPx, fillLayer.heightPx);
+  workCtx.drawImage(fillLayer.canvas, 0, 0);
+
+  const cacheCssW = fillLayer.snapshotWidth || 1;
+  const cacheCssH = fillLayer.snapshotHeight || 1;
+  const cacheScaleX = fillLayer.widthPx / Math.max(1, cacheCssW);
+  const cacheScaleY = fillLayer.heightPx / Math.max(1, cacheCssH);
+  const previousCtx = ctx;
+  ctx = workCtx;
+  ctx.setTransform(cacheScaleX, 0, 0, cacheScaleY, 0, 0);
+  ctx.translate(
+    state.centre.x + fillLayer.snapshotPanX + fillLayer.snapshotOffsetX,
+    state.centre.y + fillLayer.snapshotPanY + fillLayer.snapshotOffsetY
+  );
+  ctx.scale(fillLayer.snapshotZoom, fillLayer.snapshotZoom);
+  ctx.translate(-state.centre.x, -state.centre.y);
+  drawTrace();
+  ctx = previousCtx;
+
+  const worldX = operation.paperX + fillLayer.snapshotPaperOffsetX;
+  const worldY = operation.paperY + fillLayer.snapshotPaperOffsetY;
+  const seedCssX =
+    state.centre.x
+    + fillLayer.snapshotPanX
+    + fillLayer.snapshotOffsetX
+    + (worldX - state.centre.x) * fillLayer.snapshotZoom;
+  const seedCssY =
+    state.centre.y
+    + fillLayer.snapshotPanY
+    + fillLayer.snapshotOffsetY
+    + (worldY - state.centre.y) * fillLayer.snapshotZoom;
+
+  const seedX = Math.round((seedCssX / Math.max(1, cacheCssW)) * fillLayer.widthPx);
+  const seedY = Math.round((seedCssY / Math.max(1, cacheCssH)) * fillLayer.heightPx);
+  if (seedX < 0 || seedX >= fillLayer.widthPx || seedY < 0 || seedY >= fillLayer.heightPx) return;
+
+  const workImage = workCtx.getImageData(0, 0, fillLayer.widthPx, fillLayer.heightPx);
+  const fillImage = fillLayer.ctx.getImageData(0, 0, fillLayer.widthPx, fillLayer.heightPx);
+  const changed = floodFillImageData(workImage.data, fillImage.data, fillLayer.widthPx, fillLayer.heightPx, seedX, seedY, rgb);
+  if (!changed) return;
+  fillLayer.ctx.putImageData(fillImage, 0, 0);
+}
+
+function rebuildFillLayer() {
+  const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
+  const overscan = fillLayer.overscanFactor;
+  const cacheCssW = widthCss * overscan;
+  const cacheCssH = heightCss * overscan;
+  const marginX = (cacheCssW - widthCss) * 0.5;
+  const marginY = (cacheCssH - heightCss) * 0.5;
+  const targetW = Math.max(1, Math.ceil(cacheCssW * scaleX));
+  const targetH = Math.max(1, Math.ceil(cacheCssH * scaleY));
+
+  const fctx = ensureFillLayerSurface(targetW, targetH);
+  if (!fctx) return false;
+
+  fillLayer.snapshotWidth = cacheCssW;
+  fillLayer.snapshotHeight = cacheCssH;
+  fillLayer.snapshotOffsetX = marginX;
+  fillLayer.snapshotOffsetY = marginY;
+  fillLayer.snapshotZoom = state.view.zoom;
+  fillLayer.snapshotPanX = state.view.panX;
+  fillLayer.snapshotPanY = state.view.panY;
+  fillLayer.snapshotPaperOffsetX = state.paperOffsetX;
+  fillLayer.snapshotPaperOffsetY = state.paperOffsetY;
+  fillLayer.viewSignature = fillViewSignature();
+
+  fctx.setTransform(1, 0, 0, 1, 0, 0);
+  fctx.clearRect(0, 0, fillLayer.widthPx, fillLayer.heightPx);
+
+  for (let i = 0; i < fillLayer.operations.length; i += 1) {
+    applyFillOperationToLayer(fillLayer.operations[i]);
+  }
+
+  fillLayer.valid = true;
+  return true;
+}
+
+function ensureFillLayerReady() {
+  if (!fillLayer.valid) {
+    return rebuildFillLayer();
+  }
+  if (fillLayer.viewSignature !== fillViewSignature()) {
+    return rebuildFillLayer();
+  }
+
+  const deltaScreenX = Math.abs((state.paperOffsetX - fillLayer.snapshotPaperOffsetX) * state.view.zoom);
+  const deltaScreenY = Math.abs((state.paperOffsetY - fillLayer.snapshotPaperOffsetY) * state.view.zoom);
+  const availableMarginX = Math.max(8, (fillLayer.snapshotOffsetX || 0) - 2);
+  const availableMarginY = Math.max(8, (fillLayer.snapshotOffsetY || 0) - 2);
+  if (deltaScreenX > availableMarginX || deltaScreenY > availableMarginY) {
+    return rebuildFillLayer();
+  }
+
+  return true;
+}
+
+function drawFillLayer() {
+  if (!fillLayer.operations.length) return;
+  if (!ensureFillLayerReady()) return;
+
+  const paperDeltaX = (state.paperOffsetX - fillLayer.snapshotPaperOffsetX) * state.view.zoom;
+  const paperDeltaY = (state.paperOffsetY - fillLayer.snapshotPaperOffsetY) * state.view.zoom;
+  const destX = paperDeltaX - fillLayer.snapshotOffsetX;
+  const destY = paperDeltaY - fillLayer.snapshotOffsetY;
+  const { scaleX, scaleY } = getCanvasRasterMetrics();
+
+  ctx.save();
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  ctx.drawImage(
+    fillLayer.canvas,
+    0,
+    0,
+    fillLayer.widthPx,
+    fillLayer.heightPx,
+    destX,
+    destY,
+    fillLayer.snapshotWidth,
+    fillLayer.snapshotHeight
+  );
+  ctx.restore();
+}
+
+function addFillOperationAtWorld(worldX, worldY) {
+  const op = {
+    paperX: worldX - state.paperOffsetX,
+    paperY: worldY - state.paperOffsetY,
+    colour: state.fillColour
+  };
+  fillLayer.operations.push(op);
+  fillLayer.valid = false;
+  draw();
+}
+
 function syncPenModeControls() {
   const solidMode = state.penMode === "solid";
   if (controls.inkColourLabel) {
@@ -900,6 +1230,7 @@ function exportCurrentViewAsPng(options = {}) {
   canvas.width = Math.max(1, Math.round(originalCanvasWidth * exportScale));
   canvas.height = Math.max(1, Math.round(originalCanvasHeight * exportScale));
   traceLayer.valid = false;
+  fillLayer.valid = false;
   viewInteractionCache.valid = false;
   draw(!transparent);
 
@@ -978,6 +1309,7 @@ function exportCurrentViewAsPng(options = {}) {
     canvas.width = originalCanvasWidth;
     canvas.height = originalCanvasHeight;
     traceLayer.valid = false;
+    fillLayer.valid = false;
     viewInteractionCache.valid = false;
     state.view.zoom = previousZoom;
     state.view.panX = previousPanX;
@@ -1321,6 +1653,16 @@ function syncLayoutGeometry(options = {}) {
       state.activeStroke = state.strokes[state.strokes.length - 1] || null;
     }
   }
+
+  if (fillLayer.operations.length > 0) {
+    fillLayer.operations = fillLayer.operations.map((op) => ({
+      ...op,
+      paperX: state.centre.x + (op.paperX - oldCentre.x) * scale,
+      paperY: state.centre.y + (op.paperY - oldCentre.y) * scale
+    }));
+  }
+
+  fillLayer.valid = false;
 
   rebuildHoles();
   refreshMeta();
@@ -2153,10 +2495,74 @@ function getPinchInfo() {
   };
 }
 
+function closeCanvasContextMenu() {
+  if (!controls.canvasContextMenu) return;
+  controls.canvasContextMenu.classList.remove("is-open");
+  controls.canvasContextMenu.setAttribute("aria-hidden", "true");
+  pendingFillMenuWorldPoint = null;
+}
+
+function openCanvasContextMenu(clientX, clientY) {
+  if (!controls.canvasContextMenu) return;
+
+  const stageRect = canvas.parentElement.getBoundingClientRect();
+  const menu = controls.canvasContextMenu;
+  menu.classList.add("is-open");
+  menu.setAttribute("aria-hidden", "false");
+
+  const localX = clientX - stageRect.left;
+  const localY = clientY - stageRect.top;
+  const menuW = menu.offsetWidth || 168;
+  const menuH = menu.offsetHeight || 46;
+  const clampedX = Math.max(6, Math.min(localX, stageRect.width - menuW - 6));
+  const clampedY = Math.max(6, Math.min(localY, stageRect.height - menuH - 6));
+  menu.style.left = `${Math.round(clampedX)}px`;
+  menu.style.top = `${Math.round(clampedY)}px`;
+
+  pendingFillMenuWorldPoint = screenToWorld(clientX, clientY);
+}
+
+function cancelLongPress() {
+  if (!longPressTimer) return;
+  clearTimeout(longPressTimer);
+  longPressTimer = 0;
+  longPressPointerId = null;
+}
+
+function beginLongPressTimer(event) {
+  if (event.pointerType !== "touch") return;
+  cancelLongPress();
+  longPressPointerId = event.pointerId;
+  longPressStartX = event.clientX;
+  longPressStartY = event.clientY;
+  longPressTimer = setTimeout(() => {
+    longPressTimer = 0;
+    if (activePointers.size !== 1 || longPressPointerId === null) return;
+    const point = activePointers.get(longPressPointerId);
+    if (!point) return;
+
+    if (state.dragging) {
+      stopDrag({ pointerId: longPressPointerId });
+    }
+
+    openCanvasContextMenu(point.x, point.y);
+    longPressPointerId = null;
+  }, 520);
+}
+
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  closeCanvasContextMenu();
+  openCanvasContextMenu(event.clientX, event.clientY);
+});
+
 canvas.addEventListener("pointerdown", (event) => {
+  closeCanvasContextMenu();
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  beginLongPressTimer(event);
 
   if (activePointers.size === 2) {
+    cancelLongPress();
     beginViewInteraction(true);
     // Second finger down - cancel any active draw/drag and enter pinch mode
     cancelViewAnimation();
@@ -2219,6 +2625,14 @@ canvas.addEventListener("pointermove", (event) => {
     activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   }
 
+  if (longPressTimer && event.pointerId === longPressPointerId) {
+    const dx = event.clientX - longPressStartX;
+    const dy = event.clientY - longPressStartY;
+    if (Math.hypot(dx, dy) > 14) {
+      cancelLongPress();
+    }
+  }
+
   if (state.view.dragMode === "pinch" && activePointers.size === 2) {
     const { dist, midX, midY } = getPinchInfo();
     if (pinchLastDist > 0) {
@@ -2269,6 +2683,9 @@ canvas.addEventListener("pointermove", (event) => {
 
 function stopDrag(event) {
   activePointers.delete(event.pointerId);
+  if (event.pointerId === longPressPointerId || !activePointers.size) {
+    cancelLongPress();
+  }
 
   if (state.view.dragMode === "pinch") {
     if (activePointers.size < 2) {
@@ -2386,6 +2803,10 @@ controls.paperColour.addEventListener("input", () => {
   draw();
 });
 
+controls.fillColour.addEventListener("input", () => {
+  state.fillColour = controls.fillColour.value;
+});
+
 controls.strokeWidth.addEventListener("input", () => {
   state.strokeWidth = Number(controls.strokeWidth.value);
   draw();
@@ -2403,9 +2824,22 @@ if (controls.rackRotateSlider) {
 controls.clearTrace.addEventListener("click", () => {
   state.strokes = [];
   state.activeStroke = null;
+  fillLayer.operations = [];
+  fillLayer.valid = false;
   state.traceRevision += 1;
   draw();
 });
+
+if (controls.fillFromPointAction) {
+  controls.fillFromPointAction.addEventListener("click", () => {
+    if (!pendingFillMenuWorldPoint) {
+      closeCanvasContextMenu();
+      return;
+    }
+    addFillOperationAtWorld(pendingFillMenuWorldPoint.x, pendingFillMenuWorldPoint.y);
+    closeCanvasContextMenu();
+  });
+}
 
 controls.toggleGear.addEventListener("click", () => {
   state.showGear = !state.showGear;
@@ -2466,6 +2900,12 @@ controls.exportOverlay.addEventListener("click", (event) => {
   }
 });
 
+document.addEventListener("pointerdown", (event) => {
+  if (!controls.canvasContextMenu?.classList.contains("is-open")) return;
+  if (controls.canvasContextMenu.contains(event.target)) return;
+  closeCanvasContextMenu();
+});
+
 controls.doExportBtn.addEventListener("click", () => {
   const includeGear = controls.exportIncludeGear.checked;
   const transparent = controls.exportTransparent.checked;
@@ -2524,6 +2964,11 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key !== "Escape") return;
+
+  if (controls.canvasContextMenu?.classList.contains("is-open")) {
+    closeCanvasContextMenu();
+    return;
+  }
 
   if (controls.helpOverlay.classList.contains("show")) {
     closeHelpModal();
@@ -2604,6 +3049,7 @@ function init() {
   state.smallTeeth = Number(controls.smallTeeth.value);
   state.penMode = selectedPenMode();
   state.inkColour = controls.inkColour.value;
+  state.fillColour = controls.fillColour.value;
   const savedPaperColour = localStorage.getItem('paperColour');
   if (savedPaperColour) {
     state.paperColour = savedPaperColour;

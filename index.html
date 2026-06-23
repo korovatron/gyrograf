@@ -82,6 +82,11 @@
         </div>
 
         <label>
+          Fill
+          <input id="fillColour" type="color" value="#00b894" />
+        </label>
+
+        <label>
           Pen width
           <input id="strokeWidth" type="range" min="1" max="14" value="4" />
         </label>
@@ -113,6 +118,9 @@
             <span id="rackRotateValue" class="rack-rotate-value">0 deg</span>
           </label>
           <input id="rackRotateSlider" type="range" min="0" max="359" step="1" value="0" />
+        </div>
+        <div id="canvasContextMenu" class="canvas-context-menu" aria-hidden="true">
+          <button id="fillFromPointAction" type="button">Fill From Here</button>
         </div>
       </section>
     </main>
