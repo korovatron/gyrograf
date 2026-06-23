@@ -1342,14 +1342,36 @@ function drawFillLayer(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY = 0)
   ctx.restore();
 }
 
+function canApplyFillIncrementally() {
+  if (!fillLayer.valid || !fillLayer.canvas || !fillLayer.ctx) return false;
+  if (!fillLayer.widthPx || !fillLayer.heightPx) return false;
+  if (fillLayer.viewSignature !== fillViewSignature()) return false;
+
+  const epsilon = 1e-6;
+  if (Math.abs((fillLayer.snapshotZoom || 1) - state.view.zoom) > epsilon) return false;
+  if (Math.abs((fillLayer.snapshotPanX || 0) - state.view.panX) > epsilon) return false;
+  if (Math.abs((fillLayer.snapshotPanY || 0) - state.view.panY) > epsilon) return false;
+  if (Math.abs((fillLayer.snapshotPaperOffsetX || 0) - state.paperOffsetX) > epsilon) return false;
+  if (Math.abs((fillLayer.snapshotPaperOffsetY || 0) - state.paperOffsetY) > epsilon) return false;
+
+  return true;
+}
+
 function addFillOperationAtWorld(worldX, worldY) {
   const op = {
     paperX: worldX - state.paperOffsetX,
     paperY: worldY - state.paperOffsetY,
     colour: state.fillColour
   };
+
+  const canApplyNow = canApplyFillIncrementally();
   fillLayer.operations.push(op);
-  fillLayer.valid = false;
+  if (canApplyNow) {
+    applyFillOperationToLayer(op);
+    fillLayer.valid = true;
+  } else {
+    fillLayer.valid = false;
+  }
   traceLayer.valid = false;
   draw();
 }
