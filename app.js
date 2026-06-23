@@ -971,6 +971,12 @@ function cancelViewAnimation() {
   if (state.view.animationFrame) {
     cancelAnimationFrame(state.view.animationFrame);
     state.view.animationFrame = 0;
+    if (viewInteractionCache.settleTimer) {
+      clearTimeout(viewInteractionCache.settleTimer);
+      viewInteractionCache.settleTimer = 0;
+    }
+    viewInteractionCache.active = false;
+    viewInteractionCache.valid = false;
   }
 }
 
@@ -1554,6 +1560,7 @@ function fitViewToContent(animate = false) {
   }
 
   cancelViewAnimation();
+  beginViewInteraction();
   const startZoom = state.view.zoom;
   const startPanX = state.view.panX;
   const startPanY = state.view.panY;
@@ -1572,6 +1579,7 @@ function fitViewToContent(animate = false) {
       state.view.animationFrame = requestAnimationFrame(tick);
     } else {
       state.view.animationFrame = 0;
+      settleViewInteraction(40);
     }
   };
 
