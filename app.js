@@ -395,8 +395,6 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
   ctx.scale(state.view.zoom, state.view.zoom);
   ctx.translate(-state.centre.x, -state.centre.y);
 
-  drawFillLayer();
-
   const canUseTraceLayer = viewportOffsetX === 0 && viewportOffsetY === 0 && ctx === mainCtx;
   if (canUseTraceLayer && ensureTraceLayerReady()) {
     const { widthCss, heightCss } = getCanvasRasterMetrics();
@@ -411,6 +409,7 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
     ctx.drawImage(traceLayer.canvas, 0, 0, traceLayer.widthPx, traceLayer.heightPx, destX, destY, destW, destH);
     ctx.restore();
   } else {
+    drawFillLayer(scaleX, scaleY, viewportOffsetX, viewportOffsetY);
     drawTrace();
   }
 
@@ -720,6 +719,7 @@ function rebuildTraceLayer() {
 
   const previousCtx = ctx;
   ctx = tctx;
+  drawFillLayer(cacheScaleX, cacheScaleY, marginX, marginY);
   drawTrace();
   ctx = previousCtx;
 
@@ -853,7 +853,12 @@ function ensureFillWorkSurface(targetW, targetH) {
 }
 
 function fillViewSignature() {
-  return traceViewSignature();
+  return [
+    canvas.width,
+    canvas.height,
+    state.centre.x.toFixed(3),
+    state.centre.y.toFixed(3)
+  ].join("|");
 }
 
 function floodFillImageData(sourceData, targetData, width, height, startX, startY, fillRgb, tolerance = 14) {
@@ -1077,15 +1082,28 @@ function ensureFillLayerReady() {
   return true;
 }
 
-function drawFillLayer() {
+function drawFillLayer(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY = 0) {
   if (!fillLayer.operations.length) return;
   if (!ensureFillLayerReady()) return;
 
-  const paperDeltaX = (state.paperOffsetX - fillLayer.snapshotPaperOffsetX) * state.view.zoom;
-  const paperDeltaY = (state.paperOffsetY - fillLayer.snapshotPaperOffsetY) * state.view.zoom;
-  const destX = paperDeltaX - fillLayer.snapshotOffsetX;
-  const destY = paperDeltaY - fillLayer.snapshotOffsetY;
-  const { scaleX, scaleY } = getCanvasRasterMetrics();
+  const snapshotZoom = fillLayer.snapshotZoom || 1;
+  const scale = state.view.zoom / snapshotZoom;
+  const paperDeltaX = state.paperOffsetX - fillLayer.snapshotPaperOffsetX;
+  const paperDeltaY = state.paperOffsetY - fillLayer.snapshotPaperOffsetY;
+  const tx =
+    state.centre.x +
+    state.view.panX +
+    viewportOffsetX -
+    scale * (state.centre.x + fillLayer.snapshotPanX + fillLayer.snapshotOffsetX) +
+    paperDeltaX * state.view.zoom;
+  const ty =
+    state.centre.y +
+    state.view.panY +
+    viewportOffsetY -
+    scale * (state.centre.y + fillLayer.snapshotPanY + fillLayer.snapshotOffsetY) +
+    paperDeltaY * state.view.zoom;
+  const destW = fillLayer.snapshotWidth * scale;
+  const destH = fillLayer.snapshotHeight * scale;
 
   ctx.save();
   ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
@@ -1095,10 +1113,10 @@ function drawFillLayer() {
     0,
     fillLayer.widthPx,
     fillLayer.heightPx,
-    destX,
-    destY,
-    fillLayer.snapshotWidth,
-    fillLayer.snapshotHeight
+    tx,
+    ty,
+    destW || fillLayer.snapshotWidth,
+    destH || fillLayer.snapshotHeight
   );
   ctx.restore();
 }
@@ -1111,6 +1129,7 @@ function addFillOperationAtWorld(worldX, worldY) {
   };
   fillLayer.operations.push(op);
   fillLayer.valid = false;
+  traceLayer.valid = false;
   draw();
 }
 
