@@ -226,6 +226,7 @@ let keyboardPanRafId = 0;
 const pressedPanKeys = new Set();
 let keyboardZoomRafId = 0;
 let keyboardZoomDirection = 0;
+let lastZoomInteractionAt = 0;
 let pendingFillMenuWorldPoint = null;
 let longPressTimer = 0;
 let longPressPointerId = null;
@@ -567,11 +568,15 @@ function captureViewInteractionSnapshot() {
 function shouldRefreshInteractionSnapshot() {
   if (!viewInteractionCache.active || !viewInteractionCache.valid) return false;
 
+  const now = performance.now();
+  // Keep using the cached snapshot while zoom input is active.
+  if (now - lastZoomInteractionAt < 180) return false;
+
   const snapshotZoom = viewInteractionCache.snapshotZoom || 1;
   const zoomScale = state.view.zoom / snapshotZoom;
   if (zoomScale > 1.22 || zoomScale < 0.82) return true;
 
-  const ageMs = performance.now() - (viewInteractionCache.snapshotTimestamp || 0);
+  const ageMs = now - (viewInteractionCache.snapshotTimestamp || 0);
   if (ageMs > 320) return true;
 
   return false;
@@ -668,6 +673,7 @@ function stopKeyboardPanLoopIfIdle() {
 
 function applyKeyboardZoomStep() {
   if (!keyboardZoomDirection) return;
+  lastZoomInteractionAt = performance.now();
   const zoomFactor = keyboardZoomDirection > 0 ? 1.02 : 1 / 1.02;
   setZoomAt(state.centre.x, state.centre.y, state.view.zoom * zoomFactor);
   draw();
@@ -870,23 +876,24 @@ function appendLatestStrokeSegmentToTraceLayer(stroke) {
 
 function ensureTraceLayerReady() {
   const hasRenderableTrace = !!traceLayer.canvas && traceLayer.widthPx > 0 && traceLayer.heightPx > 0;
+  const shouldDeferHeavyRebuild = (state.dragging && state.view.dragMode === "pan") || viewInteractionCache.active;
 
   if (!traceLayer.valid) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingTraceLayerRebuild = true;
       return hasRenderableTrace;
     }
     return rebuildTraceLayer();
   }
   if (traceLayer.revision !== state.traceRevision) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingTraceLayerRebuild = true;
       return hasRenderableTrace;
     }
     return rebuildTraceLayer();
   }
   if (traceLayer.viewSignature !== traceViewSignature()) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingTraceLayerRebuild = true;
       return hasRenderableTrace;
     }
@@ -897,7 +904,7 @@ function ensureTraceLayerReady() {
   const availableMarginX = Math.max(8, (traceLayer.snapshotOffsetX || 0) - 2);
   const availableMarginY = Math.max(8, (traceLayer.snapshotOffsetY || 0) - 2);
   if (deltaScreenX > availableMarginX || deltaScreenY > availableMarginY) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingTraceLayerRebuild = true;
       return true;
     }
@@ -1273,16 +1280,17 @@ function rebuildFillLayer() {
 
 function ensureFillLayerReady() {
   const hasRenderableFill = !!fillLayer.canvas && fillLayer.widthPx > 0 && fillLayer.heightPx > 0;
+  const shouldDeferHeavyRebuild = (state.dragging && state.view.dragMode === "pan") || viewInteractionCache.active;
 
   if (!fillLayer.valid) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingFillLayerRebuild = true;
       return hasRenderableFill;
     }
     return rebuildFillLayer();
   }
   if (fillLayer.viewSignature !== fillViewSignature()) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingFillLayerRebuild = true;
       return hasRenderableFill;
     }
@@ -1294,7 +1302,7 @@ function ensureFillLayerReady() {
   const availableMarginX = Math.max(8, (fillLayer.snapshotOffsetX || 0) - 2);
   const availableMarginY = Math.max(8, (fillLayer.snapshotOffsetY || 0) - 2);
   if (deltaScreenX > availableMarginX || deltaScreenY > availableMarginY) {
-    if (state.dragging && state.view.dragMode === "pan") {
+    if (shouldDeferHeavyRebuild) {
       pendingFillLayerRebuild = true;
       return fillLayer.valid;
     }
@@ -2345,27 +2353,23 @@ function drawPaperGrid(widthCss, heightCss, transform = {}) {
   // Slightly higher contrast on darker paper keeps the grid visible but unobtrusive.
   ctx.fillStyle = paperLuma < 128 ? "rgba(255, 255, 255, 0.07)" : "rgba(0, 0, 0, 0.04)";
 
-  const leftWorld = state.centre.x + (0 - state.centre.x - panX) / zoom;
-  const rightWorld = state.centre.x + (widthCss - state.centre.x - panX) / zoom;
-  const topWorld = state.centre.y + (0 - state.centre.y - panY) / zoom;
-  const bottomWorld = state.centre.y + (heightCss - state.centre.y - panY) / zoom;
-
-  const startCol = Math.floor((leftWorld - state.paperOffsetX) / gridSize) - 1;
-  const endCol = Math.ceil((rightWorld - state.paperOffsetX) / gridSize) + 1;
-  const startRow = Math.floor((topWorld - state.paperOffsetY) / gridSize) - 1;
-  const endRow = Math.ceil((bottomWorld - state.paperOffsetY) / gridSize) + 1;
-
   const screenCellSize = gridSize * zoom;
+  if (screenCellSize <= 0.01) return;
+
+  const originScreenX = state.centre.x + panX + (state.paperOffsetX - state.centre.x) * zoom;
+  const originScreenY = state.centre.y + panY + (state.paperOffsetY - state.centre.y) * zoom;
+
+  const startCol = Math.floor((0 - originScreenX) / screenCellSize) - 1;
+  const endCol = Math.ceil((widthCss - originScreenX) / screenCellSize) + 1;
+  const startRow = Math.floor((0 - originScreenY) / screenCellSize) - 1;
+  const endRow = Math.ceil((heightCss - originScreenY) / screenCellSize) + 1;
 
   for (let row = startRow; row <= endRow; row += 1) {
-    const worldY = row * gridSize + state.paperOffsetY;
-    const y = state.centre.y + panY + (worldY - state.centre.y) * zoom;
+    const y = originScreenY + row * screenCellSize;
     for (let col = startCol; col <= endCol; col += 1) {
-      if ((row + col) % 2 === 0) {
-        const worldX = col * gridSize + state.paperOffsetX;
-        const x = state.centre.x + panX + (worldX - state.centre.x) * zoom;
-        ctx.fillRect(x, y, screenCellSize, screenCellSize);
-      }
+      if ((row + col) % 2 !== 0) continue;
+      const x = originScreenX + col * screenCellSize;
+      ctx.fillRect(x, y, screenCellSize, screenCellSize);
     }
   }
 }
@@ -2906,6 +2910,7 @@ canvas.addEventListener("pointermove", (event) => {
     const { dist, midX, midY } = getPinchInfo();
     if (pinchLastDist > 0) {
       const factor = dist / pinchLastDist;
+      lastZoomInteractionAt = performance.now();
       setZoomAt(midX, midY, state.view.zoom * factor);
       draw();
     }
@@ -3003,6 +3008,7 @@ canvas.addEventListener("wheel", (event) => {
   beginViewInteraction(true);
   cancelViewAnimation();
   event.preventDefault();
+  lastZoomInteractionAt = performance.now();
   flashZoomCursor(event.deltaY);
   const zoomFactor = Math.exp(-event.deltaY * 0.0012);
   setZoomAt(event.clientX, event.clientY, state.view.zoom * zoomFactor);
