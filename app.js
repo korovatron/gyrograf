@@ -236,6 +236,7 @@ let pendingTraceLayerRebuild = false;
 let pendingFillLayerRebuild = false;
 let renderWarmupTimer = 0;
 let renderWarmupIdleHandle = 0;
+let postSettleWarmupId = 0;
 
 const diagnostics = {
   enabled: false,
@@ -444,6 +445,32 @@ function scheduleRenderWarmup(delayMs = 180) {
   }, delayMs);
 }
 
+// After a pan/zoom settles, run several extra draw frames so the JS engine
+// re-tiers the render hot path before the user begins the next wheel drag.
+// Without this the render functions can be cold (de-optimised by GC pressure
+// during the gesture) and take 3-4 s to reach full JIT speed again.
+const POST_SETTLE_WARMUP_FRAMES = 8;
+function schedulePostSettleWarmup() {
+  if (postSettleWarmupId) {
+    cancelAnimationFrame(postSettleWarmupId);
+    postSettleWarmupId = 0;
+  }
+  let remaining = POST_SETTLE_WARMUP_FRAMES;
+  const tick = () => {
+    postSettleWarmupId = 0;
+    // Abort if we have re-entered a pan/zoom interaction.
+    if (viewInteractionCache.active) return;
+    // If the user is already dragging the wheel, the drag's own draw() calls
+    // serve as the warmup - no need to fire extra frames.
+    if (state.dragging) return;
+    if (remaining-- > 0) {
+      draw();
+      postSettleWarmupId = requestAnimationFrame(tick);
+    }
+  };
+  postSettleWarmupId = requestAnimationFrame(tick);
+}
+
 function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY = 0) {
   ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   ctx.translate(
@@ -604,6 +631,7 @@ function settleViewInteraction(delayMs = 120) {
     viewInteractionCache.valid = false;
     viewInteractionCache.showPaperGrid = false;
     draw();
+    schedulePostSettleWarmup();
   }, delayMs);
 }
 
@@ -2965,7 +2993,9 @@ function stopDrag(event) {
     if (activePointers.size < 2) {
       state.view.dragMode = null;
       pinchLastDist = 0;
+      flushDeferredLayerRebuilds();
       settleViewInteraction(80);
+      scheduleRenderWarmup(140);
     } else {
       pinchLastDist = getPinchInfo().dist;
     }
