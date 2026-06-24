@@ -1659,7 +1659,7 @@ function closeExportModal() {
 }
 
 function syncGearToggleButton() {
-  controls.toggleGear.innerHTML = state.showGear ? "HIDE<br>WHEELS" : "SHOW<br>WHEELS";
+  controls.toggleGear.innerHTML = state.showGear ? "HIDE<br>GEARS" : "SHOW<br>GEARS";
   controls.toggleGear.classList.toggle("is-off", !state.showGear);
 }
 
