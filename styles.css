@@ -235,11 +235,13 @@ select {
 }
 
 .spectra-swatch {
+  display: inline-block;
   width: 30px;
   height: 9px;
   border-radius: 999px;
   background: linear-gradient(90deg, #ff001e 0%, #ff6a00 24%, #ffd500 44%, #00c853 66%, #006dff 100%);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.38);
+  transform: translateY(2px);
 }
 
 input[type="radio"] {
