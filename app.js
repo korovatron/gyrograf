@@ -237,6 +237,9 @@ let pendingFillLayerRebuild = false;
 let renderWarmupTimer = 0;
 let renderWarmupIdleHandle = 0;
 let postSettleWarmupId = 0;
+let pendingWheelDelta = 0;
+let wheelDragRafId = 0;
+const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
 const diagnostics = {
   enabled: false,
@@ -415,6 +418,12 @@ function cancelRenderWarmup() {
   }
 }
 
+function cancelPostSettleWarmup() {
+  if (!postSettleWarmupId) return;
+  cancelAnimationFrame(postSettleWarmupId);
+  postSettleWarmupId = 0;
+}
+
 function runRenderWarmup() {
   renderWarmupIdleHandle = 0;
 
@@ -431,6 +440,9 @@ function runRenderWarmup() {
 }
 
 function scheduleRenderWarmup(delayMs = 180) {
+  // On coarse-pointer devices this warmup can overlap with a quick next drag.
+  // Skip it there to avoid post-interaction background contention.
+  if (isCoarsePointer) return;
   cancelRenderWarmup();
   renderWarmupTimer = setTimeout(() => {
     renderWarmupTimer = 0;
@@ -451,10 +463,7 @@ function scheduleRenderWarmup(delayMs = 180) {
 // during the gesture) and take 3-4 s to reach full JIT speed again.
 const POST_SETTLE_WARMUP_FRAMES = 8;
 function schedulePostSettleWarmup() {
-  if (postSettleWarmupId) {
-    cancelAnimationFrame(postSettleWarmupId);
-    postSettleWarmupId = 0;
-  }
+  cancelPostSettleWarmup();
   let remaining = POST_SETTLE_WARMUP_FRAMES;
   const tick = () => {
     postSettleWarmupId = 0;
@@ -2697,7 +2706,7 @@ function pushTracePoint(force = false) {
   const segmentDistance = last ? Math.hypot(last.x - paperX, last.y - paperY) : 0;
   // Keep sample spacing roughly constant in screen space to avoid producing
   // overly dense point streams at low zoom (a major mobile CPU hotspot).
-  const minScreenSamplePx = 1.15;
+  const minScreenSamplePx = isCoarsePointer ? 2.1 : 1.15;
   const minWorldSample = minScreenSamplePx / Math.max(0.0001, state.view.zoom);
   if (!last || force || segmentDistance > minWorldSample) {
     const lastDistance = last && Number.isFinite(last.d) ? last.d : 0;
@@ -2719,7 +2728,7 @@ function pushInterpolatedTrace(deltaTheta) {
     ? Math.hypot(selectedHolePoint.x - state.centre.x, selectedHolePoint.y - state.centre.y)
     : Math.max(state.smallRadius || 0, 1);
   // Target roughly one interpolation step per ~1.35 px of wheel travel.
-  const targetScreenStepPx = 1.35;
+  const targetScreenStepPx = isCoarsePointer ? 2.4 : 1.35;
   const adaptiveAngularStep = targetScreenStepPx / Math.max(1, holeOrbitRadius * Math.max(0.0001, state.view.zoom));
   const maxStep = Math.max(0.009, Math.min(0.032, adaptiveAngularStep));
   const stepMagnitude = isRackMode() ? Math.max(0.65, state.toothPitch * 0.22) : maxStep;
@@ -2795,6 +2804,28 @@ function fitAfterControlChange() {
 const activePointers = new Map();
 let pinchLastDist = 0;
 
+function flushWheelDragDelta() {
+  wheelDragRafId = 0;
+  if (!state.dragging || state.view.dragMode !== "wheel") {
+    pendingWheelDelta = 0;
+    return;
+  }
+
+  if (Math.abs(pendingWheelDelta) > 1e-7) {
+    const delta = pendingWheelDelta;
+    pendingWheelDelta = 0;
+    pushInterpolatedTrace(delta);
+    draw();
+  }
+}
+
+function scheduleWheelDragDelta(delta) {
+  pendingWheelDelta += delta;
+  if (!wheelDragRafId) {
+    wheelDragRafId = requestAnimationFrame(flushWheelDragDelta);
+  }
+}
+
 function getPinchInfo() {
   const pts = Array.from(activePointers.values());
   const dx = pts[1].x - pts[0].x;
@@ -2869,6 +2900,7 @@ canvas.addEventListener("contextmenu", (event) => {
 
 canvas.addEventListener("pointerdown", (event) => {
   cancelRenderWarmup();
+  cancelPostSettleWarmup();
   closeCanvasContextMenu();
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   beginLongPressTimer(event);
@@ -2901,6 +2933,11 @@ canvas.addEventListener("pointerdown", (event) => {
     state.dragging = true;
     state.selectedHole = holeIndex;
     state.view.dragMode = "wheel";
+    pendingWheelDelta = 0;
+    if (wheelDragRafId) {
+      cancelAnimationFrame(wheelDragRafId);
+      wheelDragRafId = 0;
+    }
     const activePenMode = selectedPenMode() === "spectra" ? "spectra" : "solid";
     state.penMode = activePenMode;
     state.activeStroke = {
@@ -2990,8 +3027,7 @@ canvas.addEventListener("pointermove", (event) => {
     state.lastPointerAngle = pointerAngle;
   }
 
-  pushInterpolatedTrace(delta);
-  draw();
+  scheduleWheelDragDelta(delta);
 });
 
 function stopDrag(event) {
@@ -3018,6 +3054,11 @@ function stopDrag(event) {
   const previousDragMode = state.view.dragMode;
   state.dragging = false;
   state.view.dragMode = null;
+  pendingWheelDelta = 0;
+  if (wheelDragRafId) {
+    cancelAnimationFrame(wheelDragRafId);
+    wheelDragRafId = 0;
+  }
   if (state.activeStroke && state.activeStroke.points.length < 2) {
     state.strokes.pop();
     state.traceRevision += 1;
