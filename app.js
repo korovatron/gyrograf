@@ -2695,7 +2695,11 @@ function pushTracePoint(force = false) {
   const paperX = hp.x - state.paperOffsetX;
   const paperY = hp.y - state.paperOffsetY;
   const segmentDistance = last ? Math.hypot(last.x - paperX, last.y - paperY) : 0;
-  if (!last || force || segmentDistance > 0.6) {
+  // Keep sample spacing roughly constant in screen space to avoid producing
+  // overly dense point streams at low zoom (a major mobile CPU hotspot).
+  const minScreenSamplePx = 1.15;
+  const minWorldSample = minScreenSamplePx / Math.max(0.0001, state.view.zoom);
+  if (!last || force || segmentDistance > minWorldSample) {
     const lastDistance = last && Number.isFinite(last.d) ? last.d : 0;
     points.push({
       x: paperX,
@@ -2710,7 +2714,14 @@ function pushTracePoint(force = false) {
 function pushInterpolatedTrace(deltaTheta) {
   if (state.selectedHole < 0) return;
 
-  const maxStep = 0.012;
+  const selectedHolePoint = holeWorldPosition(state.selectedHole);
+  const holeOrbitRadius = selectedHolePoint
+    ? Math.hypot(selectedHolePoint.x - state.centre.x, selectedHolePoint.y - state.centre.y)
+    : Math.max(state.smallRadius || 0, 1);
+  // Target roughly one interpolation step per ~1.35 px of wheel travel.
+  const targetScreenStepPx = 1.35;
+  const adaptiveAngularStep = targetScreenStepPx / Math.max(1, holeOrbitRadius * Math.max(0.0001, state.view.zoom));
+  const maxStep = Math.max(0.009, Math.min(0.032, adaptiveAngularStep));
   const stepMagnitude = isRackMode() ? Math.max(0.65, state.toothPitch * 0.22) : maxStep;
   const steps = Math.max(1, Math.ceil(Math.abs(deltaTheta) / stepMagnitude));
   const startTheta = state.theta;
