@@ -228,6 +228,20 @@ select {
   cursor: pointer;
 }
 
+.spectra-option-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.spectra-swatch {
+  width: 30px;
+  height: 9px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff001e 0%, #ff6a00 24%, #ffd500 44%, #00c853 66%, #006dff 100%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.38);
+}
+
 input[type="radio"] {
   cursor: pointer;
   accent-color: #4A90E2;
@@ -248,13 +262,13 @@ input[type="color"] {
 
 .colour-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 0.8rem;
 }
 
 .colour-row.is-single {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .colour-row label {

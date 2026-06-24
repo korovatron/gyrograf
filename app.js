@@ -43,7 +43,7 @@ const PRESETS = {
   pieces: [
     { id: "r150_105", label: "Ring 150/105", kind: "ring", outerTeeth: 150, innerTeeth: 105 },
     { id: "r144_96", label: "Ring 144/96", kind: "ring", outerTeeth: 144, innerTeeth: 96 },
-    { id: "rack96", label: "Obround rack 96/96", kind: "rack", teeth: 96 }
+    { id: "rack96", label: "Obround rack 96/24", kind: "rack", teeth: 96 }
   ],
   wheels: [24, 30, 32, 36, 40, 42, 45, 48, 50, 52, 56, 60, 63, 64, 72, 75, 80, 84]
 };

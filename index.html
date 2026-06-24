@@ -48,7 +48,7 @@
           <div class="radio-options">
             <label><input type="radio" name="ringPiece" value="r150_105" /> Ring 150/105 teeth</label>
             <label><input type="radio" name="ringPiece" value="r144_96" /> Ring 144/96 teeth</label>
-            <label><input type="radio" name="ringPiece" value="rack96" /> Obround rack 96/96 teeth</label>
+            <label><input type="radio" name="ringPiece" value="rack96" /> Obround rack 96/24 teeth</label>
           </div>
         </fieldset>
 
@@ -66,7 +66,10 @@
           <legend>PEN TYPE</legend>
           <div class="radio-options" id="penTypeOptions">
             <label><input type="radio" name="penType" value="solid" checked /> Solid</label>
-            <label><input type="radio" name="penType" value="spectra" /> Spectra Pen</label>
+            <label>
+              <input type="radio" name="penType" value="spectra" />
+              <span class="spectra-option-text">Spectra Pen <span class="spectra-swatch" aria-hidden="true"></span></span>
+            </label>
           </div>
         </fieldset>
 
@@ -79,12 +82,11 @@
             Paper
             <input id="paperColour" type="color" value="#ffffff" />
           </label>
+          <label>
+            Fill
+            <input id="fillColour" type="color" value="#00b894" />
+          </label>
         </div>
-
-        <label>
-          Fill
-          <input id="fillColour" type="color" value="#00b894" />
-        </label>
 
         <label>
           Pen width
