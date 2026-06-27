@@ -181,6 +181,8 @@ const state = {
   selectedHole: -1,
   strokes: [],
   undoneStrokes: [],
+  historyEntries: [],
+  undoneHistoryEntries: [],
   activeStroke: null,
   dragging: false,
   showGear: true,
@@ -338,11 +340,11 @@ function recalcTraceStats() {
 }
 
 function canUndoStroke() {
-  return state.strokes.length > 0;
+  return state.historyEntries.length > 0;
 }
 
 function canRedoStroke() {
-  return state.undoneStrokes.length > 0;
+  return state.undoneHistoryEntries.length > 0;
 }
 
 function syncHistoryControls() {
@@ -356,20 +358,50 @@ function syncHistoryControls() {
 
 function undoLastStroke() {
   if (!canUndoStroke()) return;
-  const stroke = state.strokes.pop();
-  if (!stroke) return;
-  state.undoneStrokes.push(stroke);
-  state.traceRevision += 1;
+  const entry = state.historyEntries.pop();
+  if (!entry) return;
+
+  if (entry.type === "stroke") {
+    const strokeIndex = state.strokes.lastIndexOf(entry.stroke);
+    if (strokeIndex >= 0) {
+      state.strokes.splice(strokeIndex, 1);
+      state.traceRevision += 1;
+      fillLayer.valid = false;
+    }
+  } else if (entry.type === "fill") {
+    const fillIndex = fillLayer.operations.lastIndexOf(entry.operation);
+    if (fillIndex >= 0) {
+      fillLayer.operations.splice(fillIndex, 1);
+      fillLayer.valid = false;
+    }
+  }
+
+  traceLayer.valid = false;
+  state.undoneHistoryEntries.push(entry);
   syncHistoryControls();
   draw();
 }
 
 function redoLastStroke() {
   if (!canRedoStroke()) return;
-  const stroke = state.undoneStrokes.pop();
-  if (!stroke) return;
-  state.strokes.push(stroke);
-  state.traceRevision += 1;
+  const entry = state.undoneHistoryEntries.pop();
+  if (!entry) return;
+
+  if (entry.type === "stroke") {
+    if (!state.strokes.includes(entry.stroke)) {
+      state.strokes.push(entry.stroke);
+      state.traceRevision += 1;
+      fillLayer.valid = false;
+    }
+  } else if (entry.type === "fill") {
+    if (!fillLayer.operations.includes(entry.operation)) {
+      fillLayer.operations.push(entry.operation);
+      fillLayer.valid = false;
+    }
+  }
+
+  traceLayer.valid = false;
+  state.historyEntries.push(entry);
   syncHistoryControls();
   draw();
 }
@@ -1450,8 +1482,13 @@ function addFillOperationAtWorld(worldX, worldY) {
     colour: state.fillColour
   };
 
+  if (state.undoneHistoryEntries.length > 0) {
+    state.undoneHistoryEntries = [];
+  }
+
   const canApplyNow = canApplyFillIncrementally();
   fillLayer.operations.push(op);
+  state.historyEntries.push({ type: "fill", operation: op });
   if (canApplyNow) {
     applyFillOperationToLayer(op);
     fillLayer.valid = true;
@@ -1459,6 +1496,7 @@ function addFillOperationAtWorld(worldX, worldY) {
     fillLayer.valid = false;
   }
   traceLayer.valid = false;
+  syncHistoryControls();
   draw();
 }
 
@@ -1987,14 +2025,13 @@ function syncLayoutGeometry(options = {}) {
   updateGeometryFromTeeth();
   const scale = oldOuterRadius > 0 ? state.ringOuterRadius / oldOuterRadius : 1;
   if (state.strokes.length > 0) {
-    state.strokes = state.strokes.map((stroke) => ({
-      ...stroke,
-      points: stroke.points.map((point) => ({
-        ...point,
-        x: state.centre.x + (point.x - oldCentre.x) * scale,
-        y: state.centre.y + (point.y - oldCentre.y) * scale
-      }))
-    }));
+    state.strokes.forEach((stroke) => {
+      if (!stroke.points) return;
+      stroke.points.forEach((point) => {
+        point.x = state.centre.x + (point.x - oldCentre.x) * scale;
+        point.y = state.centre.y + (point.y - oldCentre.y) * scale;
+      });
+    });
     state.traceRevision += 1;
 
     if (state.activeStroke) {
@@ -2003,22 +2040,20 @@ function syncLayoutGeometry(options = {}) {
   }
 
   if (state.undoneStrokes.length > 0) {
-    state.undoneStrokes = state.undoneStrokes.map((stroke) => ({
-      ...stroke,
-      points: stroke.points.map((point) => ({
-        ...point,
-        x: state.centre.x + (point.x - oldCentre.x) * scale,
-        y: state.centre.y + (point.y - oldCentre.y) * scale
-      }))
-    }));
+    state.undoneStrokes.forEach((stroke) => {
+      if (!stroke.points) return;
+      stroke.points.forEach((point) => {
+        point.x = state.centre.x + (point.x - oldCentre.x) * scale;
+        point.y = state.centre.y + (point.y - oldCentre.y) * scale;
+      });
+    });
   }
 
   if (fillLayer.operations.length > 0) {
-    fillLayer.operations = fillLayer.operations.map((op) => ({
-      ...op,
-      paperX: state.centre.x + (op.paperX - oldCentre.x) * scale,
-      paperY: state.centre.y + (op.paperY - oldCentre.y) * scale
-    }));
+    fillLayer.operations.forEach((op) => {
+      op.paperX = state.centre.x + (op.paperX - oldCentre.x) * scale;
+      op.paperY = state.centre.y + (op.paperY - oldCentre.y) * scale;
+    });
   }
 
   fillLayer.valid = false;
@@ -2950,6 +2985,11 @@ canvas.addEventListener("contextmenu", (event) => {
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  const isMouseLikePointer = event.pointerType === "mouse" || event.pointerType === "pen";
+  if (isMouseLikePointer && event.button !== 0) {
+    return;
+  }
+
   cancelRenderWarmup();
   cancelPostSettleWarmup();
   closeCanvasContextMenu();
@@ -2962,7 +3002,13 @@ canvas.addEventListener("pointerdown", (event) => {
     // Second finger down - cancel any active draw/drag and enter pinch mode
     cancelViewAnimation();
     if (state.activeStroke && state.activeStroke.points.length < 2) {
-      state.strokes.pop();
+      const cancelledStroke = state.strokes.pop();
+      if (cancelledStroke && state.historyEntries.length > 0) {
+        const last = state.historyEntries[state.historyEntries.length - 1];
+        if (last?.type === "stroke" && last.stroke === cancelledStroke) {
+          state.historyEntries.pop();
+        }
+      }
     }
     state.dragging = false;
     state.activeStroke = null;
@@ -2984,6 +3030,9 @@ canvas.addEventListener("pointerdown", (event) => {
     if (state.undoneStrokes.length > 0) {
       state.undoneStrokes = [];
     }
+    if (state.undoneHistoryEntries.length > 0) {
+      state.undoneHistoryEntries = [];
+    }
     state.dragging = true;
     state.selectedHole = holeIndex;
     state.view.dragMode = "wheel";
@@ -3004,6 +3053,7 @@ canvas.addEventListener("pointerdown", (event) => {
       points: []
     };
     state.strokes.push(state.activeStroke);
+    state.historyEntries.push({ type: "stroke", stroke: state.activeStroke });
     state.lastPointerAngle = Math.atan2(worldPoint.y - state.centre.y, worldPoint.x - state.centre.x);
     state.lastPointerWorld = worldPoint;
     canvas.setPointerCapture(event.pointerId);
@@ -3115,7 +3165,13 @@ function stopDrag(event) {
     wheelDragRafId = 0;
   }
   if (state.activeStroke && state.activeStroke.points.length < 2) {
-    state.strokes.pop();
+    const cancelledStroke = state.strokes.pop();
+    if (cancelledStroke && state.historyEntries.length > 0) {
+      const last = state.historyEntries[state.historyEntries.length - 1];
+      if (last?.type === "stroke" && last.stroke === cancelledStroke) {
+        state.historyEntries.pop();
+      }
+    }
     state.traceRevision += 1;
   }
   state.activeStroke = null;
@@ -3239,6 +3295,8 @@ if (controls.rackRotateSlider) {
 controls.clearTrace.addEventListener("click", () => {
   state.strokes = [];
   state.undoneStrokes = [];
+  state.historyEntries = [];
+  state.undoneHistoryEntries = [];
   state.activeStroke = null;
   fillLayer.operations = [];
   fillLayer.valid = false;
