@@ -534,6 +534,7 @@ function scheduleRenderWarmup(delayMs = 180) {
 // Without this the render functions can be cold (de-optimised by GC pressure
 // during the gesture) and take 3-4 s to reach full JIT speed again.
 const POST_SETTLE_WARMUP_FRAMES = 8;
+const DEBUG_RENDER_FILL_SEEDS = false;
 function schedulePostSettleWarmup() {
   cancelPostSettleWarmup();
   let remaining = POST_SETTLE_WARMUP_FRAMES;
@@ -579,6 +580,10 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
     drawTrace();
   }
 
+  if (DEBUG_RENDER_FILL_SEEDS) {
+    drawFillSeedDebugMarkers();
+  }
+
   if (state.showGear) drawRingPiece();
 
   const sc = smallCentre();
@@ -604,6 +609,29 @@ function renderVectorScene(scaleX, scaleY, viewportOffsetX = 0, viewportOffsetY 
     );
   }
   if (state.showGear) drawHoles(sc.x, sc.y, phi);
+}
+
+function drawFillSeedDebugMarkers() {
+  if (!fillLayer.operations.length) return;
+
+  const markerRadius = 4 / Math.max(0.0001, state.view.zoom);
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 46, 99, 0.9)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.lineWidth = 1 / Math.max(0.0001, state.view.zoom);
+
+  for (let i = 0; i < fillLayer.operations.length; i += 1) {
+    const op = fillLayer.operations[i];
+    const worldX = op.paperX + state.paperOffsetX;
+    const worldY = op.paperY + state.paperOffsetY;
+
+    ctx.beginPath();
+    ctx.arc(worldX, worldY, markerRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 function ensureViewInteractionCacheSurface(targetW, targetH) {
@@ -1475,10 +1503,171 @@ function canApplyFillIncrementally() {
   return true;
 }
 
+function refineFillSeedWorld(worldX, worldY) {
+  if (state.strokes.length === 0) {
+    return { x: worldX, y: worldY };
+  }
+
+  const { widthCss, heightCss, scaleX, scaleY } = getCanvasRasterMetrics();
+  if (widthCss < 2 || heightCss < 2 || scaleX <= 0 || scaleY <= 0 || state.view.zoom <= 0) {
+    return { x: worldX, y: worldY };
+  }
+
+  const targetW = Math.max(1, Math.ceil(widthCss * scaleX));
+  const targetH = Math.max(1, Math.ceil(heightCss * scaleY));
+  const workCtx = ensureFillWorkSurface(targetW, targetH);
+  if (!workCtx) {
+    return { x: worldX, y: worldY };
+  }
+
+  workCtx.setTransform(1, 0, 0, 1, 0, 0);
+  workCtx.clearRect(0, 0, targetW, targetH);
+
+  const previousCtx = ctx;
+  ctx = workCtx;
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  ctx.translate(state.centre.x + state.view.panX, state.centre.y + state.view.panY);
+  ctx.scale(state.view.zoom, state.view.zoom);
+  ctx.translate(-state.centre.x, -state.centre.y);
+  drawTrace();
+  ctx = previousCtx;
+
+  const seedCssX = state.centre.x + state.view.panX + (worldX - state.centre.x) * state.view.zoom;
+  const seedCssY = state.centre.y + state.view.panY + (worldY - state.centre.y) * state.view.zoom;
+  let seedX = Math.round((seedCssX / Math.max(1, widthCss)) * targetW);
+  let seedY = Math.round((seedCssY / Math.max(1, heightCss)) * targetH);
+  if (seedX < 0 || seedX >= targetW || seedY < 0 || seedY >= targetH) {
+    return { x: worldX, y: worldY };
+  }
+
+  const workImage = workCtx.getImageData(0, 0, targetW, targetH);
+  const isInteriorPixel = (x, y) => {
+    if (x < 0 || x >= targetW || y < 0 || y >= targetH) return false;
+    const idx = (y * targetW + x) * 4;
+    return workImage.data[idx + 3] < 18;
+  };
+
+  if (!isInteriorPixel(seedX, seedY)) {
+    let found = null;
+    const maxProbeRadius = 14;
+    for (let radius = 1; radius <= maxProbeRadius && !found; radius += 1) {
+      for (let oy = -radius; oy <= radius && !found; oy += 1) {
+        for (let ox = -radius; ox <= radius; ox += 1) {
+          if (Math.abs(ox) !== radius && Math.abs(oy) !== radius) continue;
+          const px = seedX + ox;
+          const py = seedY + oy;
+          if (!isInteriorPixel(px, py)) continue;
+          found = { x: px, y: py };
+          break;
+        }
+      }
+    }
+    if (!found) {
+      return { x: worldX, y: worldY };
+    }
+    seedX = found.x;
+    seedY = found.y;
+  }
+
+  const searchRadius = Math.max(220, Math.floor(Math.min(targetW, targetH) * 0.42));
+  const boundedSearch = {
+    minX: Math.max(0, seedX - searchRadius),
+    minY: Math.max(0, seedY - searchRadius),
+    maxX: Math.min(targetW - 1, seedX + searchRadius),
+    maxY: Math.min(targetH - 1, seedY + searchRadius)
+  };
+
+  let fillResult = floodFillImageData(workImage.data, targetW, targetH, seedX, seedY, 14, boundedSearch);
+  if (fillResult.changed && fillResult.touchedBounds) {
+    fillResult = floodFillImageData(workImage.data, targetW, targetH, seedX, seedY, 14, null);
+  }
+  if (!fillResult.changed || !fillResult.mask) {
+    return { x: worldX, y: worldY };
+  }
+
+  const distanceField = new Float32Array(targetW * targetH);
+  const INF = 1e9;
+  for (let y = fillResult.minY; y <= fillResult.maxY; y += 1) {
+    for (let x = fillResult.minX; x <= fillResult.maxX; x += 1) {
+      const idx = y * targetW + x;
+      if (fillResult.mask[idx] !== 2) {
+        distanceField[idx] = 0;
+        continue;
+      }
+
+      const leftInside = x > fillResult.minX && fillResult.mask[idx - 1] === 2;
+      const rightInside = x < fillResult.maxX && fillResult.mask[idx + 1] === 2;
+      const upInside = y > fillResult.minY && fillResult.mask[idx - targetW] === 2;
+      const downInside = y < fillResult.maxY && fillResult.mask[idx + targetW] === 2;
+      const isBoundaryCell = !(leftInside && rightInside && upInside && downInside);
+      distanceField[idx] = isBoundaryCell ? 1 : INF;
+    }
+  }
+
+  const DIAG = 1.41421356237;
+  for (let y = fillResult.minY; y <= fillResult.maxY; y += 1) {
+    for (let x = fillResult.minX; x <= fillResult.maxX; x += 1) {
+      const idx = y * targetW + x;
+      if (fillResult.mask[idx] !== 2) continue;
+      let best = distanceField[idx];
+      if (x > fillResult.minX) best = Math.min(best, distanceField[idx - 1] + 1);
+      if (y > fillResult.minY) best = Math.min(best, distanceField[idx - targetW] + 1);
+      if (x > fillResult.minX && y > fillResult.minY) best = Math.min(best, distanceField[idx - targetW - 1] + DIAG);
+      if (x < fillResult.maxX && y > fillResult.minY) best = Math.min(best, distanceField[idx - targetW + 1] + DIAG);
+      distanceField[idx] = best;
+    }
+  }
+
+  for (let y = fillResult.maxY; y >= fillResult.minY; y -= 1) {
+    for (let x = fillResult.maxX; x >= fillResult.minX; x -= 1) {
+      const idx = y * targetW + x;
+      if (fillResult.mask[idx] !== 2) continue;
+      let best = distanceField[idx];
+      if (x < fillResult.maxX) best = Math.min(best, distanceField[idx + 1] + 1);
+      if (y < fillResult.maxY) best = Math.min(best, distanceField[idx + targetW] + 1);
+      if (x < fillResult.maxX && y < fillResult.maxY) best = Math.min(best, distanceField[idx + targetW + 1] + DIAG);
+      if (x > fillResult.minX && y < fillResult.maxY) best = Math.min(best, distanceField[idx + targetW - 1] + DIAG);
+      distanceField[idx] = best;
+    }
+  }
+
+  let chosenX = seedX;
+  let chosenY = seedY;
+  let bestInteriorDistance = -1;
+  let bestSeedDistanceSq = Number.POSITIVE_INFINITY;
+  for (let y = fillResult.minY; y <= fillResult.maxY; y += 1) {
+    for (let x = fillResult.minX; x <= fillResult.maxX; x += 1) {
+      const idx = y * targetW + x;
+      if (fillResult.mask[idx] !== 2) continue;
+      const interiorDistance = distanceField[idx];
+      const dx = x - seedX;
+      const dy = y - seedY;
+      const seedDistanceSq = dx * dx + dy * dy;
+      const isBetterDistance = interiorDistance > bestInteriorDistance + 1e-6;
+      const isTieButCloserToSeed = Math.abs(interiorDistance - bestInteriorDistance) <= 1e-6
+        && seedDistanceSq < bestSeedDistanceSq;
+      if (!isBetterDistance && !isTieButCloserToSeed) continue;
+
+      bestInteriorDistance = interiorDistance;
+      bestSeedDistanceSq = seedDistanceSq;
+      chosenX = x;
+      chosenY = y;
+    }
+  }
+
+  const chosenCssX = (chosenX / Math.max(1, targetW)) * widthCss;
+  const chosenCssY = (chosenY / Math.max(1, targetH)) * heightCss;
+  return {
+    x: state.centre.x + (chosenCssX - state.centre.x - state.view.panX) / state.view.zoom,
+    y: state.centre.y + (chosenCssY - state.centre.y - state.view.panY) / state.view.zoom
+  };
+}
+
 function addFillOperationAtWorld(worldX, worldY) {
+  const refinedSeed = refineFillSeedWorld(worldX, worldY);
   const op = {
-    paperX: worldX - state.paperOffsetX,
-    paperY: worldY - state.paperOffsetY,
+    paperX: refinedSeed.x - state.paperOffsetX,
+    paperY: refinedSeed.y - state.paperOffsetY,
     colour: state.fillColour
   };
 
