@@ -2,6 +2,7 @@
   --bg-0: #f6f0e7;
   --bg-1: #e8d7c0;
   --ink: #1f2a37;
+  --text-primary: #E8F4FD;
   --panel: #fffaf2;
   --accent: #de6e4b;
   --accent-soft: #f3c9b7;
@@ -10,6 +11,7 @@
   --paper-colour: #ffffff;
   --panel-w: 330px;
   --tab-w: 26px;
+  --history-controls-size: 42px;
   /* iOS safe area insets - populated by env() and used throughout */
   --safe-area-top: env(safe-area-inset-top);
   --safe-area-bottom: env(safe-area-inset-bottom);
@@ -407,6 +409,55 @@ canvas {
   letter-spacing: 0.03em;
 }
 
+.history-controls {
+  position: absolute;
+  right: max(14px, calc(var(--safe-area-right, 0px) + 8px));
+  bottom: max(14px, calc(var(--safe-area-bottom, 0px) + 8px));
+  z-index: 18;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.history-btn {
+  width: var(--history-controls-size);
+  height: var(--history-controls-size);
+  border: 1px solid #555;
+  border-radius: 8px;
+  background: rgba(42, 63, 90, 0.95);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: filter 0.2s ease, opacity 0.2s ease, transform 0.15s ease;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 0;
+  padding: 0;
+  text-transform: none;
+}
+
+@media (hover: hover) {
+  .history-btn:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+}
+
+.history-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.history-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rack-rotate-control.is-visible ~ .history-controls {
+  bottom: max(104px, calc(var(--safe-area-bottom, 0px) + 96px));
+}
+
 .rack-rotate-label {
   display: flex;
   align-items: center;
@@ -435,6 +486,15 @@ canvas {
     width: min(300px, calc(100vw - 20px));
     right: max(10px, calc(var(--safe-area-right, 0px) + 6px));
     bottom: max(10px, calc(var(--safe-area-bottom, 0px) + 6px));
+  }
+
+  .history-controls {
+    right: max(10px, calc(var(--safe-area-right, 0px) + 6px));
+    bottom: max(10px, calc(var(--safe-area-bottom, 0px) + 6px));
+  }
+
+  .rack-rotate-control.is-visible ~ .history-controls {
+    bottom: max(112px, calc(var(--safe-area-bottom, 0px) + 102px));
   }
 }
 

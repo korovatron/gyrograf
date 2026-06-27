@@ -112,6 +112,8 @@ const controls = {
   rackRotateControl: document.getElementById("rackRotateControl"),
   rackRotateSlider: document.getElementById("rackRotateSlider"),
   rackRotateValue: document.getElementById("rackRotateValue"),
+  undoBtn: document.getElementById("undo-btn"),
+  redoBtn: document.getElementById("redo-btn"),
   canvasContextMenu: document.getElementById("canvasContextMenu"),
   fillFromPointAction: document.getElementById("fillFromPointAction")
 };
@@ -178,6 +180,7 @@ const state = {
   paperOffsetY: 0,
   selectedHole: -1,
   strokes: [],
+  undoneStrokes: [],
   activeStroke: null,
   dragging: false,
   showGear: true,
@@ -332,6 +335,43 @@ function recalcTraceStats() {
     points += state.strokes[s].points?.length || 0;
   }
   diagnostics.pointCount = points;
+}
+
+function canUndoStroke() {
+  return state.strokes.length > 0;
+}
+
+function canRedoStroke() {
+  return state.undoneStrokes.length > 0;
+}
+
+function syncHistoryControls() {
+  if (controls.undoBtn) {
+    controls.undoBtn.disabled = !canUndoStroke();
+  }
+  if (controls.redoBtn) {
+    controls.redoBtn.disabled = !canRedoStroke();
+  }
+}
+
+function undoLastStroke() {
+  if (!canUndoStroke()) return;
+  const stroke = state.strokes.pop();
+  if (!stroke) return;
+  state.undoneStrokes.push(stroke);
+  state.traceRevision += 1;
+  syncHistoryControls();
+  draw();
+}
+
+function redoLastStroke() {
+  if (!canRedoStroke()) return;
+  const stroke = state.undoneStrokes.pop();
+  if (!stroke) return;
+  state.strokes.push(stroke);
+  state.traceRevision += 1;
+  syncHistoryControls();
+  draw();
 }
 
 function refreshDiagnosticsHud(now) {
@@ -1962,6 +2002,17 @@ function syncLayoutGeometry(options = {}) {
     }
   }
 
+  if (state.undoneStrokes.length > 0) {
+    state.undoneStrokes = state.undoneStrokes.map((stroke) => ({
+      ...stroke,
+      points: stroke.points.map((point) => ({
+        ...point,
+        x: state.centre.x + (point.x - oldCentre.x) * scale,
+        y: state.centre.y + (point.y - oldCentre.y) * scale
+      }))
+    }));
+  }
+
   if (fillLayer.operations.length > 0) {
     fillLayer.operations = fillLayer.operations.map((op) => ({
       ...op,
@@ -2930,6 +2981,9 @@ canvas.addEventListener("pointerdown", (event) => {
   state.view.lastScreenY = screenPoint.y;
 
   if (holeIndex >= 0) {
+    if (state.undoneStrokes.length > 0) {
+      state.undoneStrokes = [];
+    }
     state.dragging = true;
     state.selectedHole = holeIndex;
     state.view.dragMode = "wheel";
@@ -2954,6 +3008,7 @@ canvas.addEventListener("pointerdown", (event) => {
     state.lastPointerWorld = worldPoint;
     canvas.setPointerCapture(event.pointerId);
     updateCanvasCursor();
+    syncHistoryControls();
     pushTracePoint();
     draw();
     return;
@@ -3069,6 +3124,7 @@ function stopDrag(event) {
     canvas.releasePointerCapture(event.pointerId);
   }
   flushDeferredLayerRebuilds();
+  syncHistoryControls();
   updateCanvasCursor();
   draw();
   scheduleRenderWarmup(140);
@@ -3182,12 +3238,26 @@ if (controls.rackRotateSlider) {
 
 controls.clearTrace.addEventListener("click", () => {
   state.strokes = [];
+  state.undoneStrokes = [];
   state.activeStroke = null;
   fillLayer.operations = [];
   fillLayer.valid = false;
   state.traceRevision += 1;
+  syncHistoryControls();
   draw();
 });
+
+if (controls.undoBtn) {
+  controls.undoBtn.addEventListener("click", () => {
+    undoLastStroke();
+  });
+}
+
+if (controls.redoBtn) {
+  controls.redoBtn.addEventListener("click", () => {
+    redoLastStroke();
+  });
+}
 
 if (controls.fillFromPointAction) {
   controls.fillFromPointAction.addEventListener("click", () => {
@@ -3297,6 +3367,26 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (isFormTarget) return;
+
+  const cmdOrCtrl = event.metaKey || event.ctrlKey;
+  if (cmdOrCtrl && !event.altKey) {
+    const keyLower = event.key.toLowerCase();
+    const redoWithShiftZ = keyLower === "z" && event.shiftKey;
+    const redoWithY = keyLower === "y";
+    const undoWithZ = keyLower === "z" && !event.shiftKey;
+
+    if (undoWithZ) {
+      event.preventDefault();
+      undoLastStroke();
+      return;
+    }
+
+    if (redoWithShiftZ || redoWithY) {
+      event.preventDefault();
+      redoLastStroke();
+      return;
+    }
+  }
 
   const key = event.key;
 
@@ -3436,6 +3526,7 @@ function init() {
   fitViewToContent();
   draw();
   scheduleRenderWarmup(120);
+  syncHistoryControls();
 
   if (showAboutOnStartup) {
     openAboutModal();
