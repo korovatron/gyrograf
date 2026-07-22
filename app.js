@@ -1,20 +1,78 @@
-// --actual-vh fixes the iOS Safari bug where 100vh includes the browser chrome,
-// causing the layout to overflow. We compute the real viewport height in JS and
-// set it as a CSS custom property, then use var(--actual-vh) in place of 100dvh.
-function setActualVH() {
-  document.documentElement.style.setProperty('--actual-vh', `${window.innerHeight}px`);
+// --actual-vh fixes intermittent iOS PWA viewport height races after launch and rotation.
+function fixIOSViewportBug() {
+  let lastKnownHeight = 0;
+
+  const setActualVH = () => {
+    let viewportHeight = window.innerHeight;
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches ||
+      window.matchMedia('(display-mode: fullscreen)').matches ||
+      window.navigator.standalone === true;
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isPortrait = window.innerHeight > window.innerWidth;
+
+    if (isIOS && isPWA && isPortrait) {
+      const screenPortraitHeight = Math.max(window.screen.height, window.screen.width);
+      const difference = screenPortraitHeight - viewportHeight;
+
+      if (difference > 15) {
+        const computedStyle = getComputedStyle(document.documentElement);
+        const safeTop = computedStyle.getPropertyValue('--safe-area-top');
+        const safeTopPx = parseInt(safeTop, 10) || 0;
+        const heightWithSafeTop = viewportHeight + safeTopPx;
+        const remainingShortfall = screenPortraitHeight - heightWithSafeTop;
+
+        if (remainingShortfall > 8 && difference <= 180) {
+          viewportHeight = screenPortraitHeight;
+        } else if (safeTopPx > 0) {
+          viewportHeight = heightWithSafeTop;
+        } else if (difference <= 180) {
+          viewportHeight = screenPortraitHeight;
+        }
+      }
+    }
+
+    document.documentElement.style.setProperty('--actual-vh', `${viewportHeight}px`);
+
+    if (lastKnownHeight > 0 && Math.abs(viewportHeight - lastKnownHeight) > 30) {
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+      }, 50);
+    }
+
+    lastKnownHeight = viewportHeight;
+  };
+
+  const scheduleViewportHeightUpdates = (delays) => {
+    delays.forEach((delay) => {
+      setTimeout(setActualVH, delay);
+    });
+  };
+
+  setActualVH();
+  scheduleViewportHeightUpdates([50, 150, 300, 500, 800, 1200]);
+
+  window.addEventListener('resize', setActualVH);
+  window.addEventListener('orientationchange', () => {
+    scheduleViewportHeightUpdates([50, 100, 200, 350, 600, 900, 1300, 1800]);
+  });
+  if (screen.orientation) {
+    screen.orientation.addEventListener('change', () => {
+      scheduleViewportHeightUpdates([50, 100, 200, 350, 600, 900, 1300, 1800]);
+    });
+  }
+  window.addEventListener('pageshow', () => {
+    scheduleViewportHeightUpdates([0, 50, 200, 500, 900]);
+    setTimeout(() => scheduleLayoutGeometrySync({ fitView: true }), 50);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      scheduleViewportHeightUpdates([50, 200, 500, 900]);
+    }
+  });
 }
-setActualVH();
-window.addEventListener('resize', setActualVH);
-// orientationchange fires before the browser has finished resizing, so we
-// delay slightly to capture the final innerHeight after rotation completes.
-window.addEventListener('orientationchange', () => setTimeout(setActualVH, 100));
-// pageshow covers the iOS back-forward cache restore case and SW updates.
-window.addEventListener('pageshow', () => {
-  setTimeout(setActualVH, 0);
-  // Reschedule layout geometry sync after viewport height is updated
-  setTimeout(() => scheduleLayoutGeometrySync({ fitView: true }), 50);
-});
+
+fixIOSViewportBug();
 
 const canvas = document.getElementById("stage");
 const mainCtx = canvas.getContext("2d");
