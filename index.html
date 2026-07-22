@@ -215,54 +215,7 @@
             async src="//gc.zgo.at/count.js"></script>
     <script>
       if ('serviceWorker' in navigator) {
-        let hasRefreshedForUpdate = false;
-
-        const requestSkipWaiting = (registration) => {
-          if (registration?.waiting) {
-            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-          }
-        };
-
-        const wireRegistrationForUpdates = (registration) => {
-          requestSkipWaiting(registration);
-
-          registration.addEventListener('updatefound', () => {
-            const installingWorker = registration.installing;
-            if (!installingWorker) return;
-
-            installingWorker.addEventListener('statechange', () => {
-              if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                requestSkipWaiting(registration);
-              }
-            });
-          });
-        };
-
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (hasRefreshedForUpdate) return;
-          hasRefreshedForUpdate = true;
-          window.location.reload();
-        });
-
-        navigator.serviceWorker.register('./service-worker.js', { scope: './', updateViaCache: 'none' })
-          .then((registration) => {
-            wireRegistrationForUpdates(registration);
-            registration.update().catch(() => {});
-
-            window.addEventListener('focus', () => {
-              registration.update().catch(() => {});
-            });
-
-            document.addEventListener('visibilitychange', () => {
-              if (!document.hidden) {
-                registration.update().catch(() => {});
-              }
-            });
-
-            setInterval(() => {
-              registration.update().catch(() => {});
-            }, 5 * 60 * 1000);
-          })
+        navigator.serviceWorker.register('./service-worker.js', { scope: './' })
           .catch((err) => console.error('Service Worker registration failed:', err));
       }
 
