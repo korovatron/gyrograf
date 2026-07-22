@@ -65,12 +65,11 @@ body {
 .layout {
   position: fixed;
   inset: 0;
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-template-rows: minmax(0, 1fr);
+  display: block;
   width: 100vw;
   height: 100vh;
   height: var(--actual-vh, 100vh);
+  height: auto;
   min-height: var(--actual-vh, 100vh);
   margin: 0;
   padding: 0;
@@ -367,6 +366,7 @@ button.is-off {
   min-height: 0;
   height: 100vh;
   height: var(--actual-vh, 100vh);
+  height: auto;
   min-height: var(--actual-vh, 100vh);
   border-radius: 0;
   background: var(--paper-colour, #ffffff);
@@ -735,6 +735,7 @@ canvas {
     min-height: 0;
     height: 100vh;
     height: var(--actual-vh, 100vh);
+    height: auto;
     border-radius: 0;
   }
 }

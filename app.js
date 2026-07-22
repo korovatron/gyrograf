@@ -33,6 +33,9 @@ function fixIOSViewportBug() {
     }
 
     document.documentElement.style.setProperty('--actual-vh', `${viewportHeight}px`);
+    if (document.body) {
+      void document.body.offsetHeight;
+    }
 
     if (lastKnownHeight > 0 && Math.abs(viewportHeight - lastKnownHeight) > 30) {
       setTimeout(() => {
