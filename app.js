@@ -49,25 +49,40 @@ function fixIOSViewportBug() {
     });
   };
 
+  const scheduleLayoutSyncs = (delays) => {
+    delays.forEach((delay) => {
+      setTimeout(() => {
+        scheduleLayoutGeometrySync({ fitView: true });
+      }, delay + 20);
+    });
+  };
+
   setActualVH();
   scheduleViewportHeightUpdates([50, 150, 300, 500, 800, 1200]);
 
   window.addEventListener('resize', setActualVH);
   window.addEventListener('orientationchange', () => {
-    scheduleViewportHeightUpdates([50, 100, 200, 350, 600, 900, 1300, 1800]);
+    const delays = [50, 100, 200, 350, 600, 900, 1300, 1800];
+    scheduleViewportHeightUpdates(delays);
+    scheduleLayoutSyncs(delays);
   });
   if (screen.orientation) {
     screen.orientation.addEventListener('change', () => {
-      scheduleViewportHeightUpdates([50, 100, 200, 350, 600, 900, 1300, 1800]);
+      const delays = [50, 100, 200, 350, 600, 900, 1300, 1800];
+      scheduleViewportHeightUpdates(delays);
+      scheduleLayoutSyncs(delays);
     });
   }
   window.addEventListener('pageshow', () => {
-    scheduleViewportHeightUpdates([0, 50, 200, 500, 900]);
-    setTimeout(() => scheduleLayoutGeometrySync({ fitView: true }), 50);
+    const delays = [0, 50, 200, 500, 900];
+    scheduleViewportHeightUpdates(delays);
+    scheduleLayoutSyncs(delays);
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      scheduleViewportHeightUpdates([50, 200, 500, 900]);
+      const delays = [50, 200, 500, 900];
+      scheduleViewportHeightUpdates(delays);
+      scheduleLayoutSyncs(delays);
     }
   });
 }
